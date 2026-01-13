@@ -272,6 +272,121 @@ app.http('getClearConnectUsers', {
   }
 });
 
+// DISCOVER RECRUITERS FROM CLEARCONNECT
+
+app.http('discoverRecruiters', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'discover-recruiters',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      context.log('Discovering recruiters from ClearConnect...');
+      
+      // Get included regions
+      const regionIds = await databaseService.getActiveRegionIds();
+      if (regionIds.length === 0) {
+        return { status: 400, jsonBody: { error: 'No regions configured' } };
+      }
+
+      // Get date range (last 2 weeks to capture active recruiters)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 14);
+      
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
+      
+      context.log(`Fetching orders from ${startStr} to ${endStr}`);
+      
+      // Get orders
+      const orders = await clearConnectService.getOrders(startStr, endStr, regionIds);
+      context.log(`Found ${orders.length} orders`);
+      
+      // Track discovered recruiters
+      const discoveredRecruiters = new Map<string, { userId: string; name: string; orderCount: number }>();
+      
+      // Process each order to find staffing specialists
+      for (const order of orders) {
+        if (!order.tempId) continue;
+        
+        try {
+          const temp = await clearConnectService.getTemp(order.tempId);
+          if (!temp || !temp.staffingSpecialist) continue;
+          
+          const recruiterId = temp.staffingSpecialist;
+          
+          if (!discoveredRecruiters.has(recruiterId)) {
+            // Look up user name
+            const user = await clearConnectService.getUser(recruiterId);
+            const name = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+            
+            discoveredRecruiters.set(recruiterId, {
+              userId: recruiterId,
+              name: name,
+              orderCount: 1
+            });
+            context.log(`Discovered recruiter: ${name} (ID: ${recruiterId})`);
+          } else {
+            const existing = discoveredRecruiters.get(recruiterId)!;
+            existing.orderCount++;
+          }
+        } catch (err) {
+          context.log(`Error processing order ${order.orderId}: ${err}`);
+        }
+      }
+      
+      context.log(`Discovered ${discoveredRecruiters.size} unique recruiters`);
+      
+      // Get existing recruiters from database
+      const existingRecruiters = await databaseService.getRecruiters(true);
+      const existingUserIds = new Set(existingRecruiters.map(r => r.user_id));
+      
+      // Add new recruiters to database
+      const added: any[] = [];
+      const skipped: any[] = [];
+      
+      for (const [userId, info] of discoveredRecruiters) {
+        const numericUserId = parseInt(userId, 10);
+        
+        if (existingUserIds.has(numericUserId)) {
+          skipped.push({ userId: numericUserId, name: info.name, reason: 'Already exists' });
+          continue;
+        }
+        
+        try {
+          // Add with default division (1 = PA Nursing) and goal (0)
+          // These can be updated later via the API
+          const newRecruiter = await databaseService.createRecruiter({
+            user_id: numericUserId,
+            user_name: info.name,
+            division_id: 1, // Default to PA Nursing
+            weekly_goal: 0,
+            display_order: 99
+          });
+          added.push(newRecruiter);
+          context.log(`Added recruiter: ${info.name}`);
+        } catch (err) {
+          context.log(`Error adding recruiter ${info.name}: ${err}`);
+          skipped.push({ userId: numericUserId, name: info.name, reason: String(err) });
+        }
+      }
+      
+      return { 
+        jsonBody: { 
+          discovered: discoveredRecruiters.size,
+          added: added.length,
+          skipped: skipped.length,
+          addedRecruiters: added,
+          skippedRecruiters: skipped
+        } 
+      };
+    } catch (error) {
+      context.error('Error discovering recruiters:', error);
+      return { status: 500, jsonBody: { error: 'Failed to discover recruiters', details: String(error) } };
+    }
+  }
+});
+
 // HEALTH CHECK
 
 app.http('healthCheck', {

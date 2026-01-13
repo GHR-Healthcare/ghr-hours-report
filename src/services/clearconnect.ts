@@ -121,14 +121,9 @@ export class ClearConnectService {
   async calculateHoursForDate(
     targetDate: string, 
     nextDate: string,
-    includedRegions: number[],
-    activeRecruiterIds: number[]
+    includedRegions: number[]
   ): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
-
-    activeRecruiterIds.forEach(id => {
-      hoursByRecruiter[id] = 0;
-    });
 
     const orders = await this.getOrders(targetDate, nextDate, includedRegions);
 
@@ -147,10 +142,6 @@ export class ClearConnectService {
         }
 
         const recruiterId = parseInt(temp.staffingSpecialist, 10);
-        
-        if (!activeRecruiterIds.includes(recruiterId)) {
-          continue;
-        }
 
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
