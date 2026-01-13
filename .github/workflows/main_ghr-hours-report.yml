@@ -60,4 +60,4 @@ jobs:
           app-name: 'ghr-hours-report'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_CE322297B86C431D84E6B97C202D6A8A }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_81089ECC759140D8A055F5F261B9AA4C }}
