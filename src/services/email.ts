@@ -78,16 +78,6 @@ class EmailService {
     // Helper to check if goal is met
     const isGoalMet = (current: number, goal: number) => goal > 0 && current >= goal;
 
-    // Helper to format a cell (green if goal met)
-    const formatCell = (value: number, goal: number, weekTotal: number) => {
-      const displayValue = value.toFixed(2);
-      // For weekly total comparison
-      if (isGoalMet(weekTotal, goal)) {
-        return `<td style="${greenStyle}">${displayValue}</td>`;
-      }
-      return `<td style="${cellStyle}">${displayValue}</td>`;
-    };
-
     // Generate Weekly Totals table
     let html = `
       <div style="font-family: Arial, sans-serif; background-color: #2b2b2b; color: white; padding: 20px;">
@@ -107,11 +97,11 @@ class EmailService {
 
     // Add rows for each week period
     const weekPeriods = includeLastWeek 
-      ? [{ key: 'lastWeek', label: 'Last Week' }, { key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }]
-      : [{ key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }];
+      ? [{ key: 'lastWeek' as const, label: 'Last Week' }, { key: 'thisWeek' as const, label: 'This Week' }, { key: 'nextWeek' as const, label: 'Next Week' }]
+      : [{ key: 'thisWeek' as const, label: 'This Week' }, { key: 'nextWeek' as const, label: 'Next Week' }];
 
     weekPeriods.forEach(({ key, label }) => {
-      const data = weeklyTotals[key as keyof typeof weeklyTotals];
+      const data = weeklyTotals[key];
       if (data) {
         const goalMet = isGoalMet(data.total, data.goal);
         html += `
