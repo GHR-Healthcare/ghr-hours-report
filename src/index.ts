@@ -62,25 +62,6 @@ export interface IncludedRegion {
 }
 
 // Report Types
-export interface RecruiterHours {
-  userId: number;
-  recruiterName: string;
-  hours: number;
-}
-
-export interface DayHours {
-  [recruiterId: number]: number;
-}
-
-export interface WeekData {
-  sunMon: DayHours;
-  tue: DayHours;
-  wed: DayHours;
-  thu: DayHours;
-  fri: DayHours;
-  sat: DayHours;
-}
-
 export interface ReportRow {
   division_id: number;
   division_name: string;
