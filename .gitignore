@@ -1,25 +1,5 @@
-# Dependencies
 node_modules/
-
-# Build output
 dist/
-
-# Local settings (contains secrets)
 local.settings.json
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+.env
 *.log
-npm-debug.log*
-
-# Azure Functions
-bin/
-obj/
-.python_packages/

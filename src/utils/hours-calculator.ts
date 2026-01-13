@@ -1,16 +1,10 @@
 import { clearConnectService } from '../services/clearconnect';
 import { databaseService } from '../services/database';
 
-/**
- * Get date string in YYYY-MM-DD format
- */
 export function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
 
-/**
- * Get the Sunday of the week containing the given date
- */
 export function getWeekSunday(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay();
@@ -19,9 +13,6 @@ export function getWeekSunday(date: Date): Date {
   return d;
 }
 
-/**
- * Get dates for last week, this week, and next week
- */
 export function getWeekDates(): {
   lastWeekStart: Date;
   thisWeekStart: Date;
@@ -43,15 +34,11 @@ export function getWeekDates(): {
   return { lastWeekStart, thisWeekStart, nextWeekStart, nextWeekEnd };
 }
 
-/**
- * Calculate and store hours for all dates in the 3-week window
- */
 export async function calculateAllHours(): Promise<{ processed: number; errors: string[] }> {
   const errors: string[] = [];
   let processed = 0;
 
   try {
-    // Get config data
     const includedRegions = await databaseService.getActiveRegionIds();
     const activeRecruiterIds = await databaseService.getActiveRecruiterIds();
 
@@ -59,10 +46,8 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
       return { processed: 0, errors: ['No active recruiters configured'] };
     }
 
-    // Get date range
     const { lastWeekStart, nextWeekEnd } = getWeekDates();
 
-    // Process each day in the range
     const currentDate = new Date(lastWeekStart);
     while (currentDate <= nextWeekEnd) {
       const dateStr = formatDate(currentDate);
@@ -78,9 +63,8 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
           activeRecruiterIds
         );
 
-        // Save to database
         for (const [userId, hours] of Object.entries(hoursByRecruiter)) {
-          await databaseService.upsertDailySnapshot(parseInt(userId), dateStr, hours);
+          await databaseService.upsertDailySnapshot(parseInt(userId), dateStr, hours as number);
         }
 
         processed++;
@@ -90,11 +74,9 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
         errors.push(errorMsg);
       }
 
-      // Move to next day
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    // Cleanup old snapshots
     await databaseService.cleanupOldSnapshots();
 
   } catch (error) {
@@ -104,9 +86,6 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
   return { processed, errors };
 }
 
-/**
- * Calculate hours for a single date
- */
 export async function calculateHoursForDate(targetDate: Date): Promise<{ success: boolean; error?: string }> {
   try {
     const includedRegions = await databaseService.getActiveRegionIds();
@@ -123,7 +102,7 @@ export async function calculateHoursForDate(targetDate: Date): Promise<{ success
     );
 
     for (const [userId, hours] of Object.entries(hoursByRecruiter)) {
-      await databaseService.upsertDailySnapshot(parseInt(userId), dateStr, hours);
+      await databaseService.upsertDailySnapshot(parseInt(userId), dateStr, hours as number);
     }
 
     return { success: true };

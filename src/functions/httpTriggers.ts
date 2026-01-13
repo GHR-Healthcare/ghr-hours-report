@@ -4,9 +4,7 @@ import { emailService } from '../services/email';
 import { clearConnectService } from '../services/clearconnect';
 import { calculateAllHours } from '../utils/hours-calculator';
 
-// ============================================
-// DIVISIONS API
-// ============================================
+// DIVISIONS
 
 app.http('getDivisions', {
   methods: ['GET'],
@@ -19,7 +17,7 @@ app.http('getDivisions', {
       return { jsonBody: divisions };
     } catch (error) {
       context.error('Error getting divisions:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to get divisions' } };
     }
   }
 });
@@ -35,7 +33,7 @@ app.http('createDivision', {
       return { status: 201, jsonBody: division };
     } catch (error) {
       context.error('Error creating division:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to create division' } };
     }
   }
 });
@@ -46,25 +44,21 @@ app.http('updateDivision', {
   route: 'divisions/{id}',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const divisionId = parseInt(request.params.id || '0');
+      const id = parseInt(request.params.id || '0');
       const body = await request.json() as any;
-      const division = await databaseService.updateDivision({ ...body, division_id: divisionId });
-      
+      const division = await databaseService.updateDivision({ ...body, division_id: id });
       if (!division) {
         return { status: 404, jsonBody: { error: 'Division not found' } };
       }
-      
       return { jsonBody: division };
     } catch (error) {
       context.error('Error updating division:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to update division' } };
     }
   }
 });
 
-// ============================================
-// RECRUITERS API
-// ============================================
+// RECRUITERS
 
 app.http('getRecruiters', {
   methods: ['GET'],
@@ -73,40 +67,27 @@ app.http('getRecruiters', {
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const includeInactive = request.query.get('includeInactive') === 'true';
-      const divisionId = request.query.get('divisionId');
-      
-      let recruiters;
-      if (divisionId) {
-        recruiters = await databaseService.getRecruitersByDivision(parseInt(divisionId));
-      } else {
-        recruiters = await databaseService.getRecruiters(includeInactive);
-      }
-      
+      const recruiters = await databaseService.getRecruiters(includeInactive);
       return { jsonBody: recruiters };
     } catch (error) {
       context.error('Error getting recruiters:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to get recruiters' } };
     }
   }
 });
 
-app.http('getRecruiterById', {
+app.http('getRecruitersByDivision', {
   methods: ['GET'],
   authLevel: 'anonymous',
-  route: 'recruiters/{id}',
+  route: 'divisions/{id}/recruiters',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const configId = parseInt(request.params.id || '0');
-      const recruiter = await databaseService.getRecruiterById(configId);
-      
-      if (!recruiter) {
-        return { status: 404, jsonBody: { error: 'Recruiter not found' } };
-      }
-      
-      return { jsonBody: recruiter };
+      const divisionId = parseInt(request.params.id || '0');
+      const recruiters = await databaseService.getRecruitersByDivision(divisionId);
+      return { jsonBody: recruiters };
     } catch (error) {
-      context.error('Error getting recruiter:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      context.error('Error getting recruiters by division:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get recruiters' } };
     }
   }
 });
@@ -122,7 +103,7 @@ app.http('createRecruiter', {
       return { status: 201, jsonBody: recruiter };
     } catch (error) {
       context.error('Error creating recruiter:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to create recruiter' } };
     }
   }
 });
@@ -133,18 +114,16 @@ app.http('updateRecruiter', {
   route: 'recruiters/{id}',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const configId = parseInt(request.params.id || '0');
+      const id = parseInt(request.params.id || '0');
       const body = await request.json() as any;
-      const recruiter = await databaseService.updateRecruiter({ ...body, config_id: configId });
-      
+      const recruiter = await databaseService.updateRecruiter({ ...body, config_id: id });
       if (!recruiter) {
         return { status: 404, jsonBody: { error: 'Recruiter not found' } };
       }
-      
       return { jsonBody: recruiter };
     } catch (error) {
       context.error('Error updating recruiter:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to update recruiter' } };
     }
   }
 });
@@ -155,44 +134,57 @@ app.http('deleteRecruiter', {
   route: 'recruiters/{id}',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const configId = parseInt(request.params.id || '0');
-      const deleted = await databaseService.deleteRecruiter(configId);
-      
+      const id = parseInt(request.params.id || '0');
+      const deleted = await databaseService.deleteRecruiter(id);
       if (!deleted) {
         return { status: 404, jsonBody: { error: 'Recruiter not found' } };
       }
-      
       return { status: 204 };
     } catch (error) {
       context.error('Error deleting recruiter:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to delete recruiter' } };
     }
   }
 });
 
-// ============================================
-// REPORT API
-// ============================================
+// REGIONS
 
-app.http('getReport', {
+app.http('getRegions', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'regions',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const regions = await databaseService.getIncludedRegions();
+      return { jsonBody: regions };
+    } catch (error) {
+      context.error('Error getting regions:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get regions' } };
+    }
+  }
+});
+
+// REPORT DATA
+
+app.http('getReportData', {
   methods: ['GET'],
   authLevel: 'anonymous',
   route: 'report',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const weekPeriod = request.query.get('weekPeriod') as 'Last Week' | 'This Week' | 'Next Week' | null;
+      const weekPeriod = request.query.get('weekPeriod');
       const reportData = await databaseService.getReportData(weekPeriod || undefined);
       const weeklyTotals = await databaseService.getWeeklyTotals();
       
       return { 
         jsonBody: { 
-          data: reportData, 
-          totals: weeklyTotals 
+          reportData, 
+          weeklyTotals 
         } 
       };
     } catch (error) {
-      context.error('Error getting report:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      context.error('Error getting report data:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get report data' } };
     }
   }
 });
@@ -206,28 +198,25 @@ app.http('getReportHtml', {
       const includeLastWeek = request.query.get('includeLastWeek') === 'true';
       const reportData = await databaseService.getReportData();
       const weeklyTotals = await databaseService.getWeeklyTotals();
-      
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
       
       return { 
-        headers: { 'Content-Type': 'text/html' },
-        body: html 
+        body: html,
+        headers: { 'Content-Type': 'text/html' }
       };
     } catch (error) {
       context.error('Error generating report HTML:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to generate report' } };
     }
   }
 });
 
-// ============================================
-// MANUAL ACTIONS API
-// ============================================
+// MANUAL TRIGGERS
 
 app.http('triggerCalculation', {
   methods: ['POST'],
   authLevel: 'anonymous',
-  route: 'actions/calculate',
+  route: 'calculate',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       context.log('Manual calculation triggered');
@@ -235,7 +224,7 @@ app.http('triggerCalculation', {
       return { jsonBody: result };
     } catch (error) {
       context.error('Error in manual calculation:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to calculate hours' } };
     }
   }
 });
@@ -243,44 +232,30 @@ app.http('triggerCalculation', {
 app.http('triggerEmail', {
   methods: ['POST'],
   authLevel: 'anonymous',
-  route: 'actions/send-email',
+  route: 'send-email',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const body = await request.json() as any;
-      const includeLastWeek = body.includeLastWeek || false;
-      const testEmail = body.testEmail; // Optional: send to specific email for testing
+      const includeLastWeek = body.includeLastWeek === true;
       
-      // First calculate hours
-      await calculateAllHours();
-      
-      // Get report data
       const reportData = await databaseService.getReportData();
       const weeklyTotals = await databaseService.getWeeklyTotals();
-      
-      // Generate email
-      const subject = includeLastWeek ? 'Daily Hours - Last Week' : 'Daily Hours';
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
       
-      // Send email
-      const recipients = testEmail ? [testEmail] : (process.env.EMAIL_RECIPIENTS || '').split(',').filter(e => e.trim());
-      
-      if (recipients.length === 0) {
-        return { status: 400, jsonBody: { error: 'No email recipients configured' } };
-      }
+      const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+      const subject = includeLastWeek ? 'Daily Hours - Last Week' : 'Daily Hours';
       
       await emailService.sendEmail(recipients, subject, html);
       
-      return { jsonBody: { success: true, recipients } };
+      return { jsonBody: { success: true, recipients: recipients.length } };
     } catch (error) {
       context.error('Error sending email:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to send email' } };
     }
   }
 });
 
-// ============================================
-// CLEARCONNECT USERS API (for admin UI lookup)
-// ============================================
+// CLEARCONNECT USERS
 
 app.http('getClearConnectUsers', {
   methods: ['GET'],
@@ -292,39 +267,23 @@ app.http('getClearConnectUsers', {
       return { jsonBody: users };
     } catch (error) {
       context.error('Error getting ClearConnect users:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
+      return { status: 500, jsonBody: { error: 'Failed to get users from ClearConnect' } };
     }
   }
 });
 
-// ============================================
-// REGIONS API
-// ============================================
-
-app.http('getRegions', {
-  methods: ['GET'],
-  authLevel: 'anonymous',
-  route: 'regions',
-  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
-      const regions = await databaseService.getIncludedRegions();
-      return { jsonBody: regions };
-    } catch (error) {
-      context.error('Error getting regions:', error);
-      return { status: 500, jsonBody: { error: String(error) } };
-    }
-  }
-});
-
-// ============================================
 // HEALTH CHECK
-// ============================================
 
-app.http('health', {
+app.http('healthCheck', {
   methods: ['GET'],
   authLevel: 'anonymous',
   route: 'health',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    return { jsonBody: { status: 'healthy', timestamp: new Date().toISOString() } };
+    return { 
+      jsonBody: { 
+        status: 'healthy', 
+        timestamp: new Date().toISOString() 
+      } 
+    };
   }
 });

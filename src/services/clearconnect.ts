@@ -5,7 +5,6 @@ export class ClearConnectService {
   private baseUrl: string;
   private username: string;
   private password: string;
-  private sessionKey: string | null = null;
 
   constructor() {
     this.baseUrl = process.env.CLEARCONNECT_URL || 'https://ctms.contingenttalentmanagement.com/genhc/clearConnect/2_0/index.cfm';
@@ -13,45 +12,12 @@ export class ClearConnectService {
     this.password = process.env.CLEARCONNECT_PASSWORD || '';
   }
 
-  /**
-   * Get Base64 encoded credentials for Basic Auth
-   */
   private getBasicAuthHeader(): string {
     const credentials = `${this.username}:${this.password}`;
     const base64 = Buffer.from(credentials).toString('base64');
     return `Basic ${base64}`;
   }
 
-  /**
-   * Get session key for Bearer Token auth (optional, can use Basic Auth for all requests)
-   */
-  async getSessionKey(): Promise<string> {
-    if (this.sessionKey) {
-      return this.sessionKey;
-    }
-
-    const response = await fetch(`${this.baseUrl}?action=getSessionKey`, {
-      method: 'GET',
-      headers: {
-        'Authorization': this.getBasicAuthHeader(),
-        'Accept': 'application/xml'
-      }
-    });
-
-    const xml = await response.text();
-    const result = await parseStringPromise(xml, { explicitArray: false });
-    
-    if (result.response?.sessionKey) {
-      this.sessionKey = result.response.sessionKey;
-      return this.sessionKey;
-    }
-
-    throw new Error('Failed to get session key from ClearConnect');
-  }
-
-  /**
-   * Make a request to ClearConnect API
-   */
   private async makeRequest(action: string, params: Record<string, string> = {}): Promise<any> {
     const queryParams = new URLSearchParams({ action, ...params });
     const url = `${this.baseUrl}?${queryParams.toString()}`;
@@ -77,9 +43,6 @@ export class ClearConnectService {
     return result;
   }
 
-  /**
-   * Get filled orders for a specific date range
-   */
   async getOrders(shiftStart: string, shiftEnd: string, tempRegionIds: number[]): Promise<ClearConnectOrder[]> {
     const result = await this.makeRequest('getOrders', {
       shiftStart: `${shiftStart} 00:00:00`,
@@ -92,7 +55,6 @@ export class ClearConnectService {
       return [];
     }
 
-    // Handle single order vs array of orders
     const orders = Array.isArray(result.response.order) 
       ? result.response.order 
       : [result.response.order];
@@ -112,9 +74,6 @@ export class ClearConnectService {
     }));
   }
 
-  /**
-   * Get temp details by ID
-   */
   async getTemp(tempId: string): Promise<ClearConnectTemp | null> {
     const result = await this.makeRequest('getTemps', {
       tempIdIn: tempId
@@ -138,9 +97,6 @@ export class ClearConnectService {
     };
   }
 
-  /**
-   * Get user details by ID
-   */
   async getUser(userId: string): Promise<ClearConnectUser | null> {
     const result = await this.makeRequest('getUsers', {
       userIdIn: userId
@@ -162,10 +118,6 @@ export class ClearConnectService {
     };
   }
 
-  /**
-   * Calculate hours for a specific date
-   * Returns hours aggregated by recruiter (staffingSpecialist) user ID
-   */
   async calculateHoursForDate(
     targetDate: string, 
     nextDate: string,
@@ -174,15 +126,12 @@ export class ClearConnectService {
   ): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
-    // Initialize all active recruiters with 0 hours
     activeRecruiterIds.forEach(id => {
       hoursByRecruiter[id] = 0;
     });
 
-    // Get all filled orders for the date
     const orders = await this.getOrders(targetDate, nextDate, includedRegions);
 
-    // Filter orders that actually start on the target date
     const targetDateOrders = orders.filter(order => {
       const orderDate = order.shiftStartTime.split(' ')[0];
       return orderDate === targetDate;
@@ -190,10 +139,8 @@ export class ClearConnectService {
 
     console.log(`Found ${targetDateOrders.length} orders for ${targetDate}`);
 
-    // Process each order
     for (const order of targetDateOrders) {
       try {
-        // Get temp to find the staffing specialist
         const temp = await this.getTemp(order.tempId);
         if (!temp || !temp.staffingSpecialist) {
           continue;
@@ -201,12 +148,10 @@ export class ClearConnectService {
 
         const recruiterId = parseInt(temp.staffingSpecialist, 10);
         
-        // Only count hours for active recruiters in our config
         if (!activeRecruiterIds.includes(recruiterId)) {
           continue;
         }
 
-        // Calculate hours
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
         const lunchMinutes = parseInt(order.lessLunchMin, 10) || 30;
@@ -215,7 +160,6 @@ export class ClearConnectService {
         const workedMinutes = totalMinutes - lunchMinutes;
         const hours = workedMinutes / 60;
 
-        // Add to recruiter's total
         if (!hoursByRecruiter[recruiterId]) {
           hoursByRecruiter[recruiterId] = 0;
         }
@@ -226,17 +170,14 @@ export class ClearConnectService {
       }
     }
 
-    // Round all values to 2 decimal places
     Object.keys(hoursByRecruiter).forEach(key => {
-      hoursByRecruiter[parseInt(key)] = Math.round(hoursByRecruiter[parseInt(key)] * 100) / 100;
+      const numKey = parseInt(key);
+      hoursByRecruiter[numKey] = Math.round(hoursByRecruiter[numKey] * 100) / 100;
     });
 
     return hoursByRecruiter;
   }
 
-  /**
-   * Get all active users from ClearConnect
-   */
   async getActiveUsers(): Promise<ClearConnectUser[]> {
     const result = await this.makeRequest('getActiveUsers', {});
 

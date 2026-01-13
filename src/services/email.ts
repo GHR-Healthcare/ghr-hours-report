@@ -1,14 +1,12 @@
 import { ClientSecretCredential } from '@azure/identity';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
+import 'isomorphic-fetch';
 import { ReportRow, WeeklyTotals } from '../types';
 
 class EmailService {
   private graphClient: Client | null = null;
 
-  /**
-   * Initialize Microsoft Graph client
-   */
   private async getClient(): Promise<Client> {
     if (this.graphClient) {
       return this.graphClient;
@@ -28,9 +26,6 @@ class EmailService {
     return this.graphClient;
   }
 
-  /**
-   * Send email via Microsoft Graph
-   */
   async sendEmail(to: string[], subject: string, htmlBody: string): Promise<void> {
     const client = await this.getClient();
     const senderEmail = process.env.EMAIL_SENDER || 'contracts@ghresources.com';
@@ -49,9 +44,6 @@ class EmailService {
     await client.api(`/users/${senderEmail}/sendMail`).post({ message });
   }
 
-  /**
-   * Generate HTML email matching the current format
-   */
   generateReportHtml(
     reportData: ReportRow[],
     weeklyTotals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null },
@@ -61,7 +53,7 @@ class EmailService {
     const headerStyle = `${cellStyle} background-color: #333; color: white; font-weight: bold;`;
     const greenStyle = `${cellStyle} background-color: #228B22; color: white;`;
 
-    // Group data by division and week period
+    // Group data by division
     const divisionData = new Map<string, Map<string, ReportRow[]>>();
 
     reportData.forEach(row => {
@@ -75,10 +67,9 @@ class EmailService {
       weekMap.get(row.week_period)!.push(row);
     });
 
-    // Helper to check if goal is met
     const isGoalMet = (current: number, goal: number) => goal > 0 && current >= goal;
 
-    // Generate Weekly Totals table
+    // Build HTML
     let html = `
       <div style="font-family: Arial, sans-serif; background-color: #2b2b2b; color: white; padding: 20px;">
         <h2 style="margin-bottom: 20px;">Weekly Totals</h2>
@@ -95,12 +86,12 @@ class EmailService {
           </tr>
     `;
 
-    // Add rows for each week period
-    const weekPeriods = includeLastWeek 
-      ? [{ key: 'lastWeek' as const, label: 'Last Week' }, { key: 'thisWeek' as const, label: 'This Week' }, { key: 'nextWeek' as const, label: 'Next Week' }]
-      : [{ key: 'thisWeek' as const, label: 'This Week' }, { key: 'nextWeek' as const, label: 'Next Week' }];
+    // Week periods to show
+    const periods: Array<{ key: 'lastWeek' | 'thisWeek' | 'nextWeek'; label: string }> = includeLastWeek 
+      ? [{ key: 'lastWeek', label: 'Last Week' }, { key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }]
+      : [{ key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }];
 
-    weekPeriods.forEach(({ key, label }) => {
+    for (const { key, label } of periods) {
       const data = weeklyTotals[key];
       if (data) {
         const goalMet = isGoalMet(data.total, data.goal);
@@ -130,11 +121,11 @@ class EmailService {
           </tr>
         `;
       }
-    });
+    }
 
     html += '</table>';
 
-    // Generate table for each division
+    // Division tables
     const sortedDivisions = Array.from(divisionData.entries())
       .sort((a, b) => {
         const aOrder = reportData.find(r => r.division_name === a[0])?.division_order || 0;
@@ -158,7 +149,7 @@ class EmailService {
           </tr>
       `;
 
-      // Get unique recruiters and sort by display order
+      // Get unique recruiters
       const recruiters = new Map<number, { name: string; goal: number; order: number }>();
       weekMap.forEach(rows => {
         rows.forEach(row => {
@@ -175,8 +166,6 @@ class EmailService {
       const sortedRecruiters = Array.from(recruiters.entries())
         .sort((a, b) => a[1].order - b[1].order);
 
-      // For each recruiter, show their hours across days
-      // We'll show "This Week" data for the daily breakdown
       const thisWeekData = weekMap.get('This Week') || [];
       
       for (const [userId, { name, goal }] of sortedRecruiters) {

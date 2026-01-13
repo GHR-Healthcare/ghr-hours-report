@@ -4,6 +4,7 @@ import {
   RecruiterConfig, 
   IncludedRegion, 
   ReportRow,
+  WeeklyTotals,
   CreateRecruiterRequest,
   UpdateRecruiterRequest,
   CreateDivisionRequest,
@@ -27,9 +28,6 @@ class DatabaseService {
     };
   }
 
-  /**
-   * Get database connection pool
-   */
   async getPool(): Promise<sql.ConnectionPool> {
     if (!this.pool) {
       this.pool = await sql.connect(this.config);
@@ -37,9 +35,6 @@ class DatabaseService {
     return this.pool;
   }
 
-  /**
-   * Close database connection
-   */
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.close();
@@ -47,9 +42,7 @@ class DatabaseService {
     }
   }
 
-  // ============================================
   // DIVISIONS
-  // ============================================
 
   async getDivisions(includeInactive = false): Promise<Division[]> {
     const pool = await this.getPool();
@@ -116,9 +109,7 @@ class DatabaseService {
     return result.recordset[0] || null;
   }
 
-  // ============================================
   // RECRUITERS
-  // ============================================
 
   async getRecruiters(includeInactive = false): Promise<RecruiterConfig[]> {
     const pool = await this.getPool();
@@ -218,9 +209,7 @@ class DatabaseService {
     return (result.rowsAffected[0] || 0) > 0;
   }
 
-  // ============================================
   // REGIONS
-  // ============================================
 
   async getIncludedRegions(): Promise<IncludedRegion[]> {
     const pool = await this.getPool();
@@ -235,9 +224,7 @@ class DatabaseService {
     return regions.map(r => r.region_id);
   }
 
-  // ============================================
   // SNAPSHOTS
-  // ============================================
 
   async upsertDailySnapshot(userId: number, shiftDate: string, totalHours: number): Promise<void> {
     const pool = await this.getPool();
@@ -254,11 +241,9 @@ class DatabaseService {
     return result.recordset[0]?.rows_deleted || 0;
   }
 
-  // ============================================
   // REPORT DATA
-  // ============================================
 
-  async getReportData(weekPeriod?: 'Last Week' | 'This Week' | 'Next Week'): Promise<ReportRow[]> {
+  async getReportData(weekPeriod?: string): Promise<ReportRow[]> {
     const pool = await this.getPool();
     let query = 'SELECT * FROM dbo.vw_report_pivoted';
     
@@ -277,7 +262,7 @@ class DatabaseService {
     return result.recordset;
   }
 
-  async getWeeklyTotals(): Promise<{ lastWeek: any; thisWeek: any; nextWeek: any }> {
+  async getWeeklyTotals(): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
     const result = await pool.request().query(`
       SELECT 
@@ -294,24 +279,33 @@ class DatabaseService {
       GROUP BY week_period
     `);
 
-    const totals: any = {
+    const totals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null } = {
       lastWeek: null,
       thisWeek: null,
       nextWeek: null
     };
 
     result.recordset.forEach((row: any) => {
-      if (row.week_period === 'Last Week') totals.lastWeek = row;
-      if (row.week_period === 'This Week') totals.thisWeek = row;
-      if (row.week_period === 'Next Week') totals.nextWeek = row;
+      const weeklyTotal: WeeklyTotals = {
+        week_period: row.week_period,
+        sun_mon: row.sun_mon || 0,
+        tue: row.tue || 0,
+        wed: row.wed || 0,
+        thu: row.thu || 0,
+        fri: row.fri || 0,
+        sat: row.sat || 0,
+        total: row.total || 0,
+        goal: row.goal || 0
+      };
+      
+      if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
+      if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
+      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
     });
 
     return totals;
   }
 
-  /**
-   * Get active recruiter user IDs
-   */
   async getActiveRecruiterIds(): Promise<number[]> {
     const recruiters = await this.getRecruiters(false);
     return recruiters.map(r => r.user_id);
