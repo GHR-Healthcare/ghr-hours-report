@@ -1,0 +1,27 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "WEBSITE_TIME_ZONE": "Eastern Standard Time",
+    
+    "CLEARCONNECT_URL": "https://ctms.contingenttalentmanagement.com/genhc/clearConnect/2_0/index.cfm",
+    "CLEARCONNECT_USERNAME": "YOUR_USERNAME",
+    "CLEARCONNECT_PASSWORD": "YOUR_PASSWORD",
+    
+    "SQL_SERVER": "ghrdatadb.database.windows.net",
+    "SQL_DATABASE": "hours_report",
+    "SQL_USER": "YOUR_SQL_USER",
+    "SQL_PASSWORD": "YOUR_SQL_PASSWORD",
+    
+    "AZURE_TENANT_ID": "YOUR_AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID": "YOUR_AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET": "YOUR_AZURE_CLIENT_SECRET",
+    
+    "EMAIL_SENDER": "contracts@ghresources.com",
+    "EMAIL_RECIPIENTS": "panursing@ghrhealthcare.com,education@ghrhealthcare.com,mjones@ghrhealthcare.com,hoursreport@ghresources.com,jformica@ghresources.com"
+  },
+  "Host": {
+    "CORS": "*"
+  }
+}
