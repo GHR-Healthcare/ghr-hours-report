@@ -22,6 +22,8 @@ export class ClearConnectService {
     const queryParams = new URLSearchParams({ action, ...params });
     const url = `${this.baseUrl}?${queryParams.toString()}`;
 
+    console.log(`ClearConnect API call: ${action}`, params);
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -43,11 +45,10 @@ export class ClearConnectService {
     return result;
   }
 
-  async getOrders(shiftStart: string, shiftEnd: string, tempRegionIds: number[]): Promise<ClearConnectOrder[]> {
+  async getOrders(shiftStart: string, shiftEnd: string): Promise<ClearConnectOrder[]> {
     const result = await this.makeRequest('getOrders', {
       shiftStart: `${shiftStart} 00:00:00`,
-      shiftEnd: `${shiftEnd} 12:00:00`,
-      tempRegionIdIn: tempRegionIds.join(','),
+      shiftEnd: `${shiftEnd} 23:59:59`,
       status: 'filled'
     });
 
@@ -120,12 +121,11 @@ export class ClearConnectService {
 
   async calculateHoursForDate(
     targetDate: string, 
-    nextDate: string,
-    includedRegions: number[]
+    nextDate: string
   ): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
-    const orders = await this.getOrders(targetDate, nextDate, includedRegions);
+    const orders = await this.getOrders(targetDate, nextDate);
 
     const targetDateOrders = orders.filter(order => {
       const orderDate = order.shiftStartTime.split(' ')[0];
