@@ -237,10 +237,10 @@ class DatabaseService {
         USING (SELECT @userId AS user_id, @shiftDate AS shift_date, @totalHours AS total_hours) AS source
         ON target.user_id = source.user_id AND target.shift_date = source.shift_date
         WHEN MATCHED THEN
-          UPDATE SET total_hours = source.total_hours, modified_at = GETDATE()
+          UPDATE SET total_hours = source.total_hours, snapshot_taken_at = GETDATE()
         WHEN NOT MATCHED THEN
-          INSERT (user_id, shift_date, total_hours)
-          VALUES (source.user_id, source.shift_date, source.total_hours);
+          INSERT (user_id, shift_date, total_hours, snapshot_taken_at)
+          VALUES (source.user_id, source.shift_date, source.total_hours, GETDATE());
       `);
   }
 
