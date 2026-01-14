@@ -1,4 +1,73 @@
+// Database Types
+
+export interface Division {
+  division_id: number;
+  division_name: string;
+  display_order: number;
+  is_active: boolean;
+  created_at: Date;
+  modified_at: Date;
+}
+
+export interface RecruiterConfig {
+  config_id: number;
+  user_id: number;
+  user_name: string;
+  division_id: number;
+  weekly_goal: number;
+  display_order: number;
+  is_active: boolean;
+  created_at: Date;
+  modified_at: Date;
+}
+
+export interface DailySnapshot {
+  snapshot_id: number;
+  user_id: number;
+  shift_date: string;
+  total_hours: number;
+  created_at: Date;
+  modified_at: Date;
+}
+
+export interface IncludedRegion {
+  region_id: number;
+  region_name: string;
+  is_active: boolean;
+}
+
+export interface ReportRow {
+  user_id: number;
+  recruiter_name: string;
+  division_id: number;
+  division_name: string;
+  weekly_goal: number;
+  division_order: number;
+  recruiter_order: number;
+  week_period: string;
+  sun_mon: number;
+  tue: number;
+  wed: number;
+  thu: number;
+  fri: number;
+  sat: number;
+  weekly_total: number;
+}
+
+export interface WeeklyTotals {
+  week_period: string;
+  sun_mon: number;
+  tue: number;
+  wed: number;
+  thu: number;
+  fri: number;
+  sat: number;
+  total: number;
+  goal: number;
+}
+
 // ClearConnect API Types
+
 export interface ClearConnectOrder {
   orderId: string;
   status: string;
@@ -26,74 +95,27 @@ export interface ClearConnectUser {
   userId: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email?: string;
 }
 
-// Database Types
-export interface Division {
-  division_id: number;
+export interface DailyHoursByRecruiter {
+  [recruiterId: number]: number;
+}
+
+// Request Types
+
+export interface CreateDivisionRequest {
   division_name: string;
-  display_order: number;
-  is_active: boolean;
+  display_order?: number;
 }
 
-export interface RecruiterConfig {
-  config_id: number;
-  user_id: number;
-  user_name: string;
+export interface UpdateDivisionRequest {
   division_id: number;
-  weekly_goal: number;
-  display_order: number;
-  is_active: boolean;
+  division_name?: string;
+  display_order?: number;
+  is_active?: boolean;
 }
 
-export interface DailySnapshot {
-  snapshot_id: number;
-  user_id: number;
-  shift_date: Date;
-  total_hours: number;
-  snapshot_taken_at: Date;
-}
-
-export interface IncludedRegion {
-  region_id: number;
-  region_name: string | null;
-  is_active: boolean;
-}
-
-// Report Types
-export interface ReportRow {
-  division_id: number;
-  division_name: string;
-  division_order: number;
-  user_id: number;
-  recruiter_name: string;
-  weekly_goal: number;
-  recruiter_order: number;
-  week_period: string;
-  sun_mon: number;
-  tue: number;
-  wed: number;
-  thu: number;
-  fri: number;
-  sat: number;
-  weekly_total: number;
-}
-
-// Weekly totals from database query
-export interface WeeklyTotals {
-  week_period: string;
-  sun_mon: number;
-  tue: number;
-  wed: number;
-  thu: number;
-  fri: number;
-  sat: number;
-  total: number;
-  goal: number;
-}
-
-// API Request Types
 export interface CreateRecruiterRequest {
   user_id: number;
   user_name: string;
@@ -109,21 +131,4 @@ export interface UpdateRecruiterRequest {
   weekly_goal?: number;
   display_order?: number;
   is_active?: boolean;
-}
-
-export interface CreateDivisionRequest {
-  division_name: string;
-  display_order?: number;
-}
-
-export interface UpdateDivisionRequest {
-  division_id: number;
-  division_name?: string;
-  display_order?: number;
-  is_active?: boolean;
-}
-
-// Hours calculation types
-export interface DailyHoursByRecruiter {
-  [recruiterId: number]: number;
 }

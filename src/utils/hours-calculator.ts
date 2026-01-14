@@ -50,11 +50,7 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
       try {
         console.log(`Processing ${dateStr}...`);
         
-        // No region filter - just date range
-        const hoursByRecruiter = await clearConnectService.calculateHoursForDate(
-          dateStr,
-          nextDateStr
-        );
+        const hoursByRecruiter = await clearConnectService.calculateHoursForDate(dateStr, nextDateStr);
 
         // Get existing recruiters to check who needs to be added
         const existingRecruiters = await databaseService.getRecruiters(true);
@@ -72,7 +68,7 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
               await databaseService.createRecruiter({
                 user_id: userId,
                 user_name: userName,
-                division_id: 1, // Default to PA Nursing
+                division_id: 1, // Default to first division
                 weekly_goal: 0,
                 display_order: 99
               });
@@ -113,11 +109,7 @@ export async function calculateHoursForDate(targetDate: Date): Promise<{ success
     const dateStr = formatDate(targetDate);
     const nextDateStr = formatDate(new Date(targetDate.getTime() + 24 * 60 * 60 * 1000));
 
-    // No region filter - just date range
-    const hoursByRecruiter = await clearConnectService.calculateHoursForDate(
-      dateStr,
-      nextDateStr
-    );
+    const hoursByRecruiter = await clearConnectService.calculateHoursForDate(dateStr, nextDateStr);
 
     for (const [userId, hours] of Object.entries(hoursByRecruiter)) {
       await databaseService.upsertDailySnapshot(parseInt(userId), dateStr, hours as number);

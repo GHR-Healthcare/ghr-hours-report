@@ -232,13 +232,26 @@ class DatabaseService {
       .input('userId', sql.Int, userId)
       .input('shiftDate', sql.Date, shiftDate)
       .input('totalHours', sql.Decimal(10, 2), totalHours)
-      .execute('dbo.upsert_daily_snapshot');
+      .query(`
+        MERGE dbo.daily_snapshots AS target
+        USING (SELECT @userId AS user_id, @shiftDate AS shift_date, @totalHours AS total_hours) AS source
+        ON target.user_id = source.user_id AND target.shift_date = source.shift_date
+        WHEN MATCHED THEN
+          UPDATE SET total_hours = source.total_hours, modified_at = GETDATE()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, shift_date, total_hours)
+          VALUES (source.user_id, source.shift_date, source.total_hours);
+      `);
   }
 
   async cleanupOldSnapshots(): Promise<number> {
     const pool = await this.getPool();
-    const result = await pool.request().execute('dbo.cleanup_old_snapshots');
-    return result.recordset[0]?.rows_deleted || 0;
+    const result = await pool.request()
+      .query(`
+        DELETE FROM dbo.daily_snapshots 
+        WHERE shift_date < DATEADD(day, -21, GETDATE())
+      `);
+    return result.rowsAffected[0] || 0;
   }
 
   // REPORT DATA
@@ -304,11 +317,6 @@ class DatabaseService {
     });
 
     return totals;
-  }
-
-  async getActiveRecruiterIds(): Promise<number[]> {
-    const recruiters = await this.getRecruiters(false);
-    return recruiters.map(r => r.user_id);
   }
 }
 

@@ -1,98 +1,61 @@
-import { ClientSecretCredential } from '@azure/identity';
-import { Client } from '@microsoft/microsoft-graph-client';
-import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
-import 'isomorphic-fetch';
 import { ReportRow, WeeklyTotals } from '../types';
 
 class EmailService {
-  private graphClient: Client | null = null;
+  generateReportHtml(
+    reportData: ReportRow[], 
+    weeklyTotals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null },
+    includeLastWeek: boolean = false
+  ): string {
+    const headerStyle = 'border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; font-weight: bold;';
+    const cellStyle = 'border: 1px solid #ddd; padding: 8px; text-align: right;';
+    const greenStyle = 'border: 1px solid #ddd; padding: 8px; text-align: right; background-color: #90EE90;';
 
-  private async getClient(): Promise<Client> {
-    if (this.graphClient) {
-      return this.graphClient;
-    }
-
-    const credential = new ClientSecretCredential(
-      process.env.AZURE_TENANT_ID || '',
-      process.env.AZURE_CLIENT_ID || '',
-      process.env.AZURE_CLIENT_SECRET || ''
-    );
-
-    const authProvider = new TokenCredentialAuthenticationProvider(credential, {
-      scopes: ['https://graph.microsoft.com/.default']
-    });
-
-    this.graphClient = Client.initWithMiddleware({ authProvider });
-    return this.graphClient;
-  }
-
-  async sendEmail(to: string[], subject: string, htmlBody: string): Promise<void> {
-    const client = await this.getClient();
-    const senderEmail = process.env.EMAIL_SENDER || 'contracts@ghresources.com';
-
-    const message = {
-      subject,
-      body: {
-        contentType: 'HTML',
-        content: htmlBody
-      },
-      toRecipients: to.map(email => ({
-        emailAddress: { address: email }
-      }))
+    const isGoalMet = (total: number, goal: number): boolean => {
+      if (goal <= 0) return false;
+      return total >= goal;
     };
 
-    await client.api(`/users/${senderEmail}/sendMail`).post({ message });
-  }
-
-  generateReportHtml(
-    reportData: ReportRow[],
-    weeklyTotals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null },
-    includeLastWeek = false
-  ): string {
-    const cellStyle = 'padding: 8px 12px; text-align: center; border: 1px solid #555;';
-    const headerStyle = `${cellStyle} background-color: #333; color: white; font-weight: bold;`;
-    const greenStyle = `${cellStyle} background-color: #228B22; color: white;`;
-
-    // Group data by division
-    const divisionData = new Map<string, Map<string, ReportRow[]>>();
-
-    reportData.forEach(row => {
-      if (!divisionData.has(row.division_name)) {
-        divisionData.set(row.division_name, new Map());
-      }
-      const weekMap = divisionData.get(row.division_name)!;
-      if (!weekMap.has(row.week_period)) {
-        weekMap.set(row.week_period, []);
-      }
-      weekMap.get(row.week_period)!.push(row);
-    });
-
-    const isGoalMet = (current: number, goal: number) => goal > 0 && current >= goal;
-
-    // Build HTML
     let html = `
-      <div style="font-family: Arial, sans-serif; background-color: #2b2b2b; color: white; padding: 20px;">
-        <h2 style="margin-bottom: 20px;">Weekly Totals</h2>
-        <table style="border-collapse: collapse; margin-bottom: 30px;">
-          <tr>
-            <th style="${headerStyle}"></th>
-            <th style="${headerStyle}">Sun/Mon</th>
-            <th style="${headerStyle}">Tues</th>
-            <th style="${headerStyle}">Wed</th>
-            <th style="${headerStyle}">Thu</th>
-            <th style="${headerStyle}">Fri</th>
-            <th style="${headerStyle}">Sat</th>
-            <th style="${headerStyle}">GOALS</th>
-          </tr>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; }
+          table { border-collapse: collapse; margin-bottom: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; }
+          th { background-color: #f2f2f2; }
+          h1 { color: #333; }
+          h2 { color: #666; margin-top: 30px; }
+        </style>
+      </head>
+      <body>
+        <h1>Daily Hours</h1>
     `;
 
-    // Week periods to show
-    const periods: Array<{ key: 'lastWeek' | 'thisWeek' | 'nextWeek'; label: string }> = includeLastWeek 
-      ? [{ key: 'lastWeek', label: 'Last Week' }, { key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }]
-      : [{ key: 'thisWeek', label: 'This Week' }, { key: 'nextWeek', label: 'Next Week' }];
+    // Weekly Totals Table
+    html += `
+      <h2>Weekly Totals</h2>
+      <table>
+        <tr>
+          <th style="${headerStyle}"></th>
+          <th style="${headerStyle}">Sun/Mon</th>
+          <th style="${headerStyle}">Tue</th>
+          <th style="${headerStyle}">Wed</th>
+          <th style="${headerStyle}">Thu</th>
+          <th style="${headerStyle}">Fri</th>
+          <th style="${headerStyle}">Sat</th>
+          <th style="${headerStyle}">GOALS</th>
+        </tr>
+    `;
 
-    for (const { key, label } of periods) {
-      const data = weeklyTotals[key];
+    const weekRows: { label: string; data: WeeklyTotals | null }[] = [];
+    
+    if (includeLastWeek) {
+      weekRows.push({ label: 'Last Week', data: weeklyTotals.lastWeek });
+    }
+    weekRows.push({ label: 'This Week', data: weeklyTotals.thisWeek });
+    weekRows.push({ label: 'Next Week', data: weeklyTotals.nextWeek });
+
+    for (const { label, data } of weekRows) {
       if (data) {
         const goalMet = isGoalMet(data.total, data.goal);
         html += `
@@ -125,7 +88,21 @@ class EmailService {
 
     html += '</table>';
 
-    // Division tables
+    // Group data by division
+    const divisionData = new Map<string, Map<string, ReportRow[]>>();
+    
+    for (const row of reportData) {
+      if (!divisionData.has(row.division_name)) {
+        divisionData.set(row.division_name, new Map());
+      }
+      const weekMap = divisionData.get(row.division_name)!;
+      if (!weekMap.has(row.week_period)) {
+        weekMap.set(row.week_period, []);
+      }
+      weekMap.get(row.week_period)!.push(row);
+    }
+
+    // Sort divisions by display order
     const sortedDivisions = Array.from(divisionData.entries())
       .sort((a, b) => {
         const aOrder = reportData.find(r => r.division_name === a[0])?.division_order || 0;
@@ -133,10 +110,11 @@ class EmailService {
         return aOrder - bOrder;
       });
 
+    // Generate table for each division
     for (const [divisionName, weekMap] of sortedDivisions) {
       html += `
-        <h2 style="margin-top: 30px; margin-bottom: 20px;">${divisionName}</h2>
-        <table style="border-collapse: collapse; margin-bottom: 30px;">
+        <h2>${divisionName}</h2>
+        <table>
           <tr>
             <th style="${headerStyle}"></th>
             <th style="${headerStyle}">Sun/Mon</th>
@@ -149,7 +127,7 @@ class EmailService {
           </tr>
       `;
 
-      // Get unique recruiters
+      // Get unique recruiters and sort by display order
       const recruiters = new Map<number, { name: string; goal: number; order: number }>();
       weekMap.forEach(rows => {
         rows.forEach(row => {
@@ -166,6 +144,7 @@ class EmailService {
       const sortedRecruiters = Array.from(recruiters.entries())
         .sort((a, b) => a[1].order - b[1].order);
 
+      // Get "This Week" data for display
       const thisWeekData = weekMap.get('This Week') || [];
       
       for (const [userId, { name, goal }] of sortedRecruiters) {
@@ -207,9 +186,18 @@ class EmailService {
       html += '</table>';
     }
 
-    html += '</div>';
+    html += `
+      </body>
+      </html>
+    `;
 
     return html;
+  }
+
+  async sendEmail(recipients: string[], subject: string, htmlContent: string): Promise<void> {
+    // TODO: Implement Microsoft Graph email sending
+    console.log(`Would send email to ${recipients.join(', ')} with subject: ${subject}`);
+    console.log(`HTML length: ${htmlContent.length} characters`);
   }
 }
 

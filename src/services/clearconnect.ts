@@ -7,7 +7,7 @@ export class ClearConnectService {
   private password: string;
 
   constructor() {
-    this.baseUrl = process.env.CLEARCONNECT_URL || 'https://ctms.contingenttalentmanagement.com/genhc/clearConnect/2_0/index.cfm';
+    this.baseUrl = process.env.CLEARCONNECT_URL || '';
     this.username = process.env.CLEARCONNECT_USERNAME || '';
     this.password = process.env.CLEARCONNECT_PASSWORD || '';
   }
@@ -22,7 +22,7 @@ export class ClearConnectService {
     const queryParams = new URLSearchParams({ action, ...params });
     const url = `${this.baseUrl}?${queryParams.toString()}`;
 
-    console.log(`ClearConnect API call: ${action}`, params);
+    console.log(`ClearConnect API: ${action}`, JSON.stringify(params));
 
     const response = await fetch(url, {
       method: 'GET',
@@ -119,10 +119,7 @@ export class ClearConnectService {
     };
   }
 
-  async calculateHoursForDate(
-    targetDate: string, 
-    nextDate: string
-  ): Promise<DailyHoursByRecruiter> {
+  async calculateHoursForDate(targetDate: string, nextDate: string): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
     const orders = await this.getOrders(targetDate, nextDate);

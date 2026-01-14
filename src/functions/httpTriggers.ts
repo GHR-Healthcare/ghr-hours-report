@@ -255,7 +255,7 @@ app.http('triggerEmail', {
   }
 });
 
-// CLEARCONNECT USERS
+// CLEARCONNECT
 
 app.http('getClearConnectUsers', {
   methods: ['GET'],
@@ -272,7 +272,7 @@ app.http('getClearConnectUsers', {
   }
 });
 
-// DISCOVER RECRUITERS FROM CLEARCONNECT
+// DISCOVER RECRUITERS
 
 app.http('discoverRecruiters', {
   methods: ['GET', 'POST'],
@@ -292,7 +292,7 @@ app.http('discoverRecruiters', {
       
       context.log(`Fetching orders from ${startStr} to ${endStr}`);
       
-      // Get orders (no region filter - just date and status)
+      // Get orders (no region filter)
       const orders = await clearConnectService.getOrders(startStr, endStr);
       context.log(`Found ${orders.length} orders`);
       
@@ -310,7 +310,6 @@ app.http('discoverRecruiters', {
           const recruiterId = temp.staffingSpecialist;
           
           if (!discoveredRecruiters.has(recruiterId)) {
-            // Look up user name
             const user = await clearConnectService.getUser(recruiterId);
             const name = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
             
@@ -348,12 +347,10 @@ app.http('discoverRecruiters', {
         }
         
         try {
-          // Add with default division (1 = PA Nursing) and goal (0)
-          // These can be updated later via the API
           const newRecruiter = await databaseService.createRecruiter({
             user_id: numericUserId,
             user_name: info.name,
-            division_id: 1, // Default to PA Nursing
+            division_id: 1,
             weekly_goal: 0,
             display_order: 99
           });
