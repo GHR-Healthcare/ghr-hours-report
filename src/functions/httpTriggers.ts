@@ -282,49 +282,62 @@ app.http('discoverRecruiters', {
     try {
       context.log('Discovering recruiters from ClearConnect...');
 
-      // Get date range (last 2 weeks to capture active recruiters)
+      // Get date range - just last 3 days for faster discovery
       const endDate = new Date();
       const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 14);
+      startDate.setDate(startDate.getDate() - 3);
       
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
       
       context.log(`Fetching orders from ${startStr} to ${endStr}`);
       
-      // Get orders (no region filter)
+      // Get orders
       const orders = await clearConnectService.getOrders(startStr, endStr);
       context.log(`Found ${orders.length} orders`);
-      
-      // Track discovered recruiters
+
+      // Get all unique temp IDs
+      const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
+      context.log(`Looking up ${tempIds.length} unique temps in batch...`);
+
+      // Batch fetch all temps at once (much faster!)
+      const tempsMap = await clearConnectService.getTempsBatch(tempIds);
+      context.log(`Retrieved ${tempsMap.size} temps`);
+
+      // Collect unique staffing specialists (recruiters)
+      const recruiterIds = new Set<string>();
+      for (const temp of tempsMap.values()) {
+        if (temp.staffingSpecialist) {
+          recruiterIds.add(temp.staffingSpecialist);
+        }
+      }
+      context.log(`Found ${recruiterIds.size} unique recruiters`);
+
+      // Batch fetch all users at once
+      const usersMap = await clearConnectService.getUsersBatch([...recruiterIds]);
+      context.log(`Retrieved ${usersMap.size} user records`);
+
+      // Build discovered recruiters map
       const discoveredRecruiters = new Map<string, { userId: string; name: string; orderCount: number }>();
       
-      // Process each order to find staffing specialists
       for (const order of orders) {
-        if (!order.tempId) continue;
+        const temp = tempsMap.get(order.tempId);
+        if (!temp || !temp.staffingSpecialist) continue;
+
+        const recruiterId = temp.staffingSpecialist;
         
-        try {
-          const temp = await clearConnectService.getTemp(order.tempId);
-          if (!temp || !temp.staffingSpecialist) continue;
+        if (!discoveredRecruiters.has(recruiterId)) {
+          const user = usersMap.get(recruiterId);
+          const name = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
           
-          const recruiterId = temp.staffingSpecialist;
-          
-          if (!discoveredRecruiters.has(recruiterId)) {
-            const user = await clearConnectService.getUser(recruiterId);
-            const name = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
-            
-            discoveredRecruiters.set(recruiterId, {
-              userId: recruiterId,
-              name: name,
-              orderCount: 1
-            });
-            context.log(`Discovered recruiter: ${name} (ID: ${recruiterId})`);
-          } else {
-            const existing = discoveredRecruiters.get(recruiterId)!;
-            existing.orderCount++;
-          }
-        } catch (err) {
-          context.log(`Error processing order ${order.orderId}: ${err}`);
+          discoveredRecruiters.set(recruiterId, {
+            userId: recruiterId,
+            name: name,
+            orderCount: 1
+          });
+        } else {
+          const existing = discoveredRecruiters.get(recruiterId)!;
+          existing.orderCount++;
         }
       }
       
@@ -342,7 +355,7 @@ app.http('discoverRecruiters', {
         const numericUserId = parseInt(userId, 10);
         
         if (existingUserIds.has(numericUserId)) {
-          skipped.push({ userId: numericUserId, name: info.name, reason: 'Already exists' });
+          skipped.push({ userId: numericUserId, name: info.name, reason: 'Already exists', orderCount: info.orderCount });
           continue;
         }
         
@@ -354,7 +367,7 @@ app.http('discoverRecruiters', {
             weekly_goal: 0,
             display_order: 99
           });
-          added.push(newRecruiter);
+          added.push({ ...newRecruiter, orderCount: info.orderCount });
           context.log(`Added recruiter: ${info.name}`);
         } catch (err) {
           context.log(`Error adding recruiter ${info.name}: ${err}`);
@@ -364,6 +377,9 @@ app.http('discoverRecruiters', {
       
       return { 
         jsonBody: { 
+          dateRange: { start: startStr, end: endStr },
+          ordersProcessed: orders.length,
+          tempsFound: tempsMap.size,
           discovered: discoveredRecruiters.size,
           added: added.length,
           skipped: skipped.length,

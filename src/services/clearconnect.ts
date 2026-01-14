@@ -5,6 +5,11 @@ export class ClearConnectService {
   private baseUrl: string;
   private username: string;
   private password: string;
+  
+  // Cache for temp lookups (tempId -> temp data)
+  private tempCache: Map<string, ClearConnectTemp | null> = new Map();
+  // Cache for user lookups (userId -> user data)
+  private userCache: Map<string, ClearConnectUser | null> = new Map();
 
   constructor() {
     this.baseUrl = process.env.CLEARCONNECT_URL || '';
@@ -59,7 +64,6 @@ export class ClearConnectService {
       status: 'filled'
     });
 
-    // The response structure is: { order: [...] } (root element "orders" is stripped by explicitRoot: false)
     console.log('getOrders result keys:', Object.keys(result || {}));
 
     if (!result?.order) {
@@ -89,12 +93,17 @@ export class ClearConnectService {
   }
 
   async getTemp(tempId: string): Promise<ClearConnectTemp | null> {
+    // Check cache first
+    if (this.tempCache.has(tempId)) {
+      return this.tempCache.get(tempId) || null;
+    }
+
     const result = await this.makeRequest('getTemps', {
       tempIdIn: tempId
     });
 
-    // Response structure: { tempRecord: {...} } or { tempRecord: [...] }
     if (!result?.tempRecord) {
+      this.tempCache.set(tempId, null);
       return null;
     }
 
@@ -102,7 +111,7 @@ export class ClearConnectService {
       ? result.tempRecord[0]
       : result.tempRecord;
 
-    return {
+    const tempData: ClearConnectTemp = {
       tempId: temp.tempId || '',
       homeRegion: temp.homeRegion || '',
       firstName: temp.firstName || '',
@@ -110,15 +119,86 @@ export class ClearConnectService {
       staffingSpecialist: temp.staffingSpecialist || '',
       recruiter: temp.recruiter || ''
     };
+
+    this.tempCache.set(tempId, tempData);
+    return tempData;
+  }
+
+  // Batch lookup temps - much faster for multiple temps
+  async getTempsBatch(tempIds: string[]): Promise<Map<string, ClearConnectTemp>> {
+    const results = new Map<string, ClearConnectTemp>();
+    const uncachedIds: string[] = [];
+
+    // Check cache first
+    for (const tempId of tempIds) {
+      if (this.tempCache.has(tempId)) {
+        const cached = this.tempCache.get(tempId);
+        if (cached) results.set(tempId, cached);
+      } else {
+        uncachedIds.push(tempId);
+      }
+    }
+
+    if (uncachedIds.length === 0) {
+      return results;
+    }
+
+    // Batch lookup uncached temps (API supports comma-separated IDs)
+    // Process in chunks of 100 to avoid URL length limits
+    const chunkSize = 100;
+    for (let i = 0; i < uncachedIds.length; i += chunkSize) {
+      const chunk = uncachedIds.slice(i, i + chunkSize);
+      
+      try {
+        const result = await this.makeRequest('getTemps', {
+          tempIdIn: chunk.join(',')
+        });
+
+        if (result?.tempRecord) {
+          const temps = Array.isArray(result.tempRecord) 
+            ? result.tempRecord 
+            : [result.tempRecord];
+
+          for (const temp of temps) {
+            const tempData: ClearConnectTemp = {
+              tempId: temp.tempId || '',
+              homeRegion: temp.homeRegion || '',
+              firstName: temp.firstName || '',
+              lastName: temp.lastName || '',
+              staffingSpecialist: temp.staffingSpecialist || '',
+              recruiter: temp.recruiter || ''
+            };
+            this.tempCache.set(tempData.tempId, tempData);
+            results.set(tempData.tempId, tempData);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching temp batch:`, error);
+      }
+    }
+
+    // Mark unfound temps as null in cache
+    for (const tempId of uncachedIds) {
+      if (!results.has(tempId)) {
+        this.tempCache.set(tempId, null);
+      }
+    }
+
+    return results;
   }
 
   async getUser(userId: string): Promise<ClearConnectUser | null> {
+    // Check cache first
+    if (this.userCache.has(userId)) {
+      return this.userCache.get(userId) || null;
+    }
+
     const result = await this.makeRequest('getUsers', {
       userIdIn: userId
     });
 
-    // Response structure: { user: {...} } or { user: [...] }
     if (!result?.user) {
+      this.userCache.set(userId, null);
       return null;
     }
 
@@ -126,12 +206,68 @@ export class ClearConnectService {
       ? result.user[0]
       : result.user;
 
-    return {
+    const userData: ClearConnectUser = {
       userId: user.userId || '',
       firstName: user.firstName || '',
       lastName: user.lastName || '',
       email: user.email || ''
     };
+
+    this.userCache.set(userId, userData);
+    return userData;
+  }
+
+  // Batch lookup users
+  async getUsersBatch(userIds: string[]): Promise<Map<string, ClearConnectUser>> {
+    const results = new Map<string, ClearConnectUser>();
+    const uncachedIds: string[] = [];
+
+    // Check cache first
+    for (const userId of userIds) {
+      if (this.userCache.has(userId)) {
+        const cached = this.userCache.get(userId);
+        if (cached) results.set(userId, cached);
+      } else {
+        uncachedIds.push(userId);
+      }
+    }
+
+    if (uncachedIds.length === 0) {
+      return results;
+    }
+
+    // Batch lookup in chunks
+    const chunkSize = 100;
+    for (let i = 0; i < uncachedIds.length; i += chunkSize) {
+      const chunk = uncachedIds.slice(i, i + chunkSize);
+      
+      try {
+        const result = await this.makeRequest('getUsers', {
+          userIdIn: chunk.join(',')
+        });
+
+        if (result?.user) {
+          const users = Array.isArray(result.user) 
+            ? result.user 
+            : [result.user];
+
+          for (const user of users) {
+            const userData: ClearConnectUser = {
+              userId: user.userId || '',
+              firstName: user.firstName || '',
+              lastName: user.lastName || '',
+              email: user.email || ''
+            };
+            this.userCache.set(userData.userId, userData);
+            results.set(userData.userId, userData);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching user batch:`, error);
+      }
+    }
+
+    return results;
   }
 
   async calculateHoursForDate(targetDate: string, nextDate: string): Promise<DailyHoursByRecruiter> {
@@ -141,23 +277,30 @@ export class ClearConnectService {
 
     // Filter orders to only those starting on targetDate
     const targetDateOrders = orders.filter(order => {
-      // Handle both formats: "2026-01-14T08:00:00" and "2026-01-14 08:00:00"
       const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
       return orderDate === targetDate;
     });
 
     console.log(`Found ${targetDateOrders.length} orders for ${targetDate}`);
 
+    // Get all unique temp IDs
+    const tempIds = [...new Set(targetDateOrders.map(o => o.tempId).filter(id => id))];
+    console.log(`Looking up ${tempIds.length} unique temps...`);
+
+    // Batch fetch all temps at once
+    const tempsMap = await this.getTempsBatch(tempIds);
+    console.log(`Retrieved ${tempsMap.size} temps`);
+
+    // Process orders using cached temp data
     for (const order of targetDateOrders) {
       try {
-        const temp = await this.getTemp(order.tempId);
+        const temp = tempsMap.get(order.tempId);
         if (!temp || !temp.staffingSpecialist) {
           continue;
         }
 
         const recruiterId = parseInt(temp.staffingSpecialist, 10);
 
-        // Parse ISO format dates
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
         const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
@@ -203,6 +346,12 @@ export class ClearConnectService {
     }));
   }
 
+  // Clear caches (useful for long-running processes)
+  clearCaches(): void {
+    this.tempCache.clear();
+    this.userCache.clear();
+  }
+
   // Debug method to test the API
   async testConnection(): Promise<{
     success: boolean;
@@ -216,7 +365,6 @@ export class ClearConnectService {
     const authHeader = this.getBasicAuthHeader();
     
     try {
-      // Try a simple API call
       const params = new URLSearchParams({ 
         action: 'getOrders',
         shiftStart: '2026-01-14 00:00:00',
