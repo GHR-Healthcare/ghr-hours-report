@@ -229,6 +229,169 @@ app.http('triggerCalculation', {
   }
 });
 
+// Calculate for a single day (much faster for testing)
+app.http('calculateDay', {
+  methods: ['GET', 'POST'],
+  authLevel: 'anonymous',
+  route: 'calculate/day',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      // Get date from query param or use today
+      const dateParam = request.query.get('date');
+      const targetDate = dateParam ? new Date(dateParam) : new Date();
+      const dateStr = targetDate.toISOString().split('T')[0];
+      
+      context.log(`Calculating hours for ${dateStr}...`);
+      
+      const nextDate = new Date(targetDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      const nextDateStr = nextDate.toISOString().split('T')[0];
+      
+      // Get orders for this day
+      const orders = await clearConnectService.getOrders(dateStr, dateStr);
+      context.log(`Found ${orders.length} orders for ${dateStr}`);
+      
+      // Get unique temps
+      const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
+      const tempsMap = await clearConnectService.getTempsBatch(tempIds);
+      
+      // Calculate hours by recruiter
+      const hoursByRecruiter: Record<number, number> = {};
+      
+      for (const order of orders) {
+        const temp = tempsMap.get(order.tempId);
+        if (!temp || !temp.staffingSpecialist) continue;
+        
+        const recruiterId = parseInt(temp.staffingSpecialist, 10);
+        const startTime = new Date(order.shiftStartTime);
+        const endTime = new Date(order.shiftEndTime);
+        const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
+        
+        const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        const workedMinutes = totalMinutes - lunchMinutes;
+        const hours = workedMinutes / 60;
+        
+        if (!hoursByRecruiter[recruiterId]) {
+          hoursByRecruiter[recruiterId] = 0;
+        }
+        hoursByRecruiter[recruiterId] += hours;
+      }
+      
+      // Save snapshots
+      let saved = 0;
+      for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
+        const roundedHours = Math.round(hours * 100) / 100;
+        await databaseService.upsertDailySnapshot(parseInt(userIdStr), dateStr, roundedHours);
+        saved++;
+      }
+      
+      return { 
+        jsonBody: { 
+          date: dateStr,
+          ordersProcessed: orders.length,
+          tempsFound: tempsMap.size,
+          recruitersWithHours: Object.keys(hoursByRecruiter).length,
+          snapshotsSaved: saved,
+          hoursSummary: hoursByRecruiter
+        } 
+      };
+    } catch (error) {
+      context.error('Error calculating day:', error);
+      return { status: 500, jsonBody: { error: 'Failed to calculate', details: String(error) } };
+    }
+  }
+});
+
+// Calculate for a date range (with progress)
+app.http('calculateRange', {
+  methods: ['GET', 'POST'],
+  authLevel: 'anonymous',
+  route: 'calculate/range',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const startParam = request.query.get('start');
+      const endParam = request.query.get('end');
+      
+      if (!startParam || !endParam) {
+        return { 
+          status: 400, 
+          jsonBody: { error: 'Missing start or end date. Use ?start=2026-01-12&end=2026-01-14' } 
+        };
+      }
+      
+      const startDate = new Date(startParam);
+      const endDate = new Date(endParam);
+      
+      const results: any[] = [];
+      const currentDate = new Date(startDate);
+      
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        context.log(`Processing ${dateStr}...`);
+        
+        try {
+          const orders = await clearConnectService.getOrders(dateStr, dateStr);
+          const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
+          const tempsMap = await clearConnectService.getTempsBatch(tempIds);
+          
+          const hoursByRecruiter: Record<number, number> = {};
+          
+          for (const order of orders) {
+            const temp = tempsMap.get(order.tempId);
+            if (!temp || !temp.staffingSpecialist) continue;
+            
+            const recruiterId = parseInt(temp.staffingSpecialist, 10);
+            const startTime = new Date(order.shiftStartTime);
+            const endTime = new Date(order.shiftEndTime);
+            const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
+            
+            const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+            const workedMinutes = totalMinutes - lunchMinutes;
+            const hours = workedMinutes / 60;
+            
+            if (!hoursByRecruiter[recruiterId]) {
+              hoursByRecruiter[recruiterId] = 0;
+            }
+            hoursByRecruiter[recruiterId] += hours;
+          }
+          
+          // Save snapshots
+          for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
+            const roundedHours = Math.round(hours * 100) / 100;
+            await databaseService.upsertDailySnapshot(parseInt(userIdStr), dateStr, roundedHours);
+          }
+          
+          results.push({
+            date: dateStr,
+            orders: orders.length,
+            recruiters: Object.keys(hoursByRecruiter).length,
+            status: 'success'
+          });
+        } catch (err) {
+          results.push({
+            date: dateStr,
+            status: 'error',
+            error: String(err)
+          });
+        }
+        
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      
+      return { 
+        jsonBody: { 
+          range: { start: startParam, end: endParam },
+          daysProcessed: results.length,
+          results
+        } 
+      };
+    } catch (error) {
+      context.error('Error calculating range:', error);
+      return { status: 500, jsonBody: { error: 'Failed to calculate range', details: String(error) } };
+    }
+  }
+});
+
 app.http('triggerEmail', {
   methods: ['POST'],
   authLevel: 'anonymous',
