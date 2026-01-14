@@ -40,12 +40,6 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
   let processed = 0;
 
   try {
-    const includedRegions = await databaseService.getActiveRegionIds();
-    
-    if (includedRegions.length === 0) {
-      return { processed: 0, errors: ['No regions configured'], newRecruiters: [] };
-    }
-
     const { lastWeekStart, nextWeekEnd } = getWeekDates();
 
     const currentDate = new Date(lastWeekStart);
@@ -56,10 +50,10 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
       try {
         console.log(`Processing ${dateStr}...`);
         
+        // No region filter - just date range
         const hoursByRecruiter = await clearConnectService.calculateHoursForDate(
           dateStr,
-          nextDateStr,
-          includedRegions
+          nextDateStr
         );
 
         // Get existing recruiters to check who needs to be added
@@ -116,15 +110,13 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
 
 export async function calculateHoursForDate(targetDate: Date): Promise<{ success: boolean; error?: string }> {
   try {
-    const includedRegions = await databaseService.getActiveRegionIds();
-
     const dateStr = formatDate(targetDate);
     const nextDateStr = formatDate(new Date(targetDate.getTime() + 24 * 60 * 60 * 1000));
 
+    // No region filter - just date range
     const hoursByRecruiter = await clearConnectService.calculateHoursForDate(
       dateStr,
-      nextDateStr,
-      includedRegions
+      nextDateStr
     );
 
     for (const [userId, hours] of Object.entries(hoursByRecruiter)) {
