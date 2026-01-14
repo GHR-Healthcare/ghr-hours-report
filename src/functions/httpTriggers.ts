@@ -378,6 +378,26 @@ app.http('discoverRecruiters', {
   }
 });
 
+// DEBUG - Test ClearConnect API
+
+app.http('debugClearConnect', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'debug/clearconnect',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      context.log('Testing ClearConnect connection...');
+      
+      const result = await clearConnectService.testConnection();
+      
+      return { jsonBody: result };
+    } catch (error) {
+      context.error('Debug error:', error);
+      return { status: 500, jsonBody: { error: String(error) } };
+    }
+  }
+});
+
 // HEALTH CHECK
 
 app.http('healthCheck', {

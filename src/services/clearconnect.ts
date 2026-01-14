@@ -14,7 +14,7 @@ export class ClearConnectService {
 
   private getBasicAuthHeader(): string {
     const credentials = `${this.username}:${this.password}`;
-    const base64 = Buffer.from(credentials).toString('base64');
+    const base64 = Buffer.from(credentials, 'utf-8').toString('base64');
     return `Basic ${base64}`;
   }
 
@@ -24,19 +24,25 @@ export class ClearConnectService {
 
     console.log(`ClearConnect API: ${action}`, JSON.stringify(params));
 
+    const authHeader = this.getBasicAuthHeader();
+    
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': this.getBasicAuthHeader(),
+        'Authorization': authHeader,
         'Accept': 'application/xml'
       }
     });
 
+    const xml = await response.text();
+    
+    console.log(`Response status: ${response.status}`);
+    console.log(`Response preview: ${xml.substring(0, 300)}`);
+
     if (!response.ok) {
-      throw new Error(`ClearConnect API error: ${response.status} ${response.statusText}`);
+      throw new Error(`ClearConnect API error: ${response.status} ${response.statusText} - ${xml.substring(0, 200)}`);
     }
 
-    const xml = await response.text();
     const result = await parseStringPromise(xml, { 
       explicitArray: false,
       ignoreAttrs: true 
@@ -52,13 +58,18 @@ export class ClearConnectService {
       status: 'filled'
     });
 
+    console.log('getOrders response structure:', JSON.stringify(result).substring(0, 500));
+
     if (!result.response?.order) {
+      console.log('No orders found in response. Full response:', JSON.stringify(result));
       return [];
     }
 
     const orders = Array.isArray(result.response.order) 
       ? result.response.order 
       : [result.response.order];
+
+    console.log(`Parsed ${orders.length} orders`);
 
     return orders.map((o: any) => ({
       orderId: o.orderId || '',
@@ -183,6 +194,63 @@ export class ClearConnectService {
       lastName: u.lastName || '',
       email: u.email || ''
     }));
+  }
+
+  // Debug method to test the API
+  async testConnection(): Promise<{
+    success: boolean;
+    baseUrl: string;
+    username: string;
+    passwordLength: number;
+    authHeader: string;
+    response?: any;
+    error?: string;
+  }> {
+    const authHeader = this.getBasicAuthHeader();
+    
+    try {
+      // Try a simple API call
+      const params = new URLSearchParams({ 
+        action: 'getOrders',
+        shiftStart: '2026-01-14 00:00:00',
+        shiftEnd: '2026-01-14 23:59:59',
+        status: 'filled'
+      });
+      const url = `${this.baseUrl}?${params.toString()}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+          'Accept': 'application/xml'
+        }
+      });
+      
+      const text = await response.text();
+      
+      return {
+        success: response.ok,
+        baseUrl: this.baseUrl,
+        username: this.username,
+        passwordLength: this.password.length,
+        authHeader: authHeader.substring(0, 20) + '...',
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          bodyPreview: text.substring(0, 1000),
+          bodyLength: text.length
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        baseUrl: this.baseUrl,
+        username: this.username,
+        passwordLength: this.password.length,
+        authHeader: authHeader.substring(0, 20) + '...',
+        error: String(error)
+      };
+    }
   }
 }
 
