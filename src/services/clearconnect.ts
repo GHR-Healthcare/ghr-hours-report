@@ -36,16 +36,17 @@ export class ClearConnectService {
 
     const xml = await response.text();
     
-    console.log(`Response status: ${response.status}`);
-    console.log(`Response preview: ${xml.substring(0, 300)}`);
+    console.log(`Response status: ${response.status}, length: ${xml.length}`);
 
     if (!response.ok) {
-      throw new Error(`ClearConnect API error: ${response.status} ${response.statusText} - ${xml.substring(0, 200)}`);
+      throw new Error(`ClearConnect API error: ${response.status} ${response.statusText}`);
     }
 
     const result = await parseStringPromise(xml, { 
       explicitArray: false,
-      ignoreAttrs: true 
+      ignoreAttrs: true,
+      trim: true,
+      explicitRoot: false
     });
 
     return result;
@@ -58,16 +59,17 @@ export class ClearConnectService {
       status: 'filled'
     });
 
-    console.log('getOrders response structure:', JSON.stringify(result).substring(0, 500));
+    // The response structure is: { order: [...] } (root element "orders" is stripped by explicitRoot: false)
+    console.log('getOrders result keys:', Object.keys(result || {}));
 
-    if (!result.response?.order) {
-      console.log('No orders found in response. Full response:', JSON.stringify(result));
+    if (!result?.order) {
+      console.log('No orders found in response');
       return [];
     }
 
-    const orders = Array.isArray(result.response.order) 
-      ? result.response.order 
-      : [result.response.order];
+    const orders = Array.isArray(result.order) 
+      ? result.order 
+      : [result.order];
 
     console.log(`Parsed ${orders.length} orders`);
 
@@ -82,7 +84,7 @@ export class ClearConnectService {
       clientId: o.clientId || '',
       clientName: o.clientName || '',
       regionName: o.regionName || '',
-      lessLunchMin: o.lessLunchMin || '30'
+      lessLunchMin: o.lessLunchMin || '0'
     }));
   }
 
@@ -91,13 +93,14 @@ export class ClearConnectService {
       tempIdIn: tempId
     });
 
-    if (!result.response?.tempRecord) {
+    // Response structure: { tempRecord: {...} } or { tempRecord: [...] }
+    if (!result?.tempRecord) {
       return null;
     }
 
-    const temp = Array.isArray(result.response.tempRecord)
-      ? result.response.tempRecord[0]
-      : result.response.tempRecord;
+    const temp = Array.isArray(result.tempRecord)
+      ? result.tempRecord[0]
+      : result.tempRecord;
 
     return {
       tempId: temp.tempId || '',
@@ -114,13 +117,14 @@ export class ClearConnectService {
       userIdIn: userId
     });
 
-    if (!result.response?.user) {
+    // Response structure: { user: {...} } or { user: [...] }
+    if (!result?.user) {
       return null;
     }
 
-    const user = Array.isArray(result.response.user)
-      ? result.response.user[0]
-      : result.response.user;
+    const user = Array.isArray(result.user)
+      ? result.user[0]
+      : result.user;
 
     return {
       userId: user.userId || '',
@@ -135,8 +139,10 @@ export class ClearConnectService {
 
     const orders = await this.getOrders(targetDate, nextDate);
 
+    // Filter orders to only those starting on targetDate
     const targetDateOrders = orders.filter(order => {
-      const orderDate = order.shiftStartTime.split(' ')[0];
+      // Handle both formats: "2026-01-14T08:00:00" and "2026-01-14 08:00:00"
+      const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
       return orderDate === targetDate;
     });
 
@@ -151,9 +157,10 @@ export class ClearConnectService {
 
         const recruiterId = parseInt(temp.staffingSpecialist, 10);
 
+        // Parse ISO format dates
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
-        const lunchMinutes = parseInt(order.lessLunchMin, 10) || 30;
+        const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
 
         const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
         const workedMinutes = totalMinutes - lunchMinutes;
@@ -180,13 +187,13 @@ export class ClearConnectService {
   async getActiveUsers(): Promise<ClearConnectUser[]> {
     const result = await this.makeRequest('getActiveUsers', {});
 
-    if (!result.response?.user) {
+    if (!result?.user) {
       return [];
     }
 
-    const users = Array.isArray(result.response.user)
-      ? result.response.user
-      : [result.response.user];
+    const users = Array.isArray(result.user)
+      ? result.user
+      : [result.user];
 
     return users.map((u: any) => ({
       userId: u.userId || '',
