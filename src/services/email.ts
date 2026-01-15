@@ -1,6 +1,108 @@
 import { ReportRow, WeeklyTotals } from '../types';
 
 class EmailService {
+  private tenantId: string;
+  private clientId: string;
+  private clientSecret: string;
+  private fromAddress: string;
+  private senderUserId: string;
+  private accessToken: string | null = null;
+  private tokenExpiry: number = 0;
+
+  constructor() {
+    this.tenantId = process.env.AZURE_TENANT_ID || '';
+    this.clientId = process.env.AZURE_CLIENT_ID || '';
+    this.clientSecret = process.env.AZURE_CLIENT_SECRET || '';
+    this.fromAddress = process.env.EMAIL_FROM || 'contracts@ghrhealthcare.com';
+    this.senderUserId = process.env.EMAIL_SENDER_USER || 'itadmin@ghrhealthcare.onmicrosoft.com';
+  }
+
+  private async getAccessToken(): Promise<string> {
+    const now = Date.now();
+    if (this.accessToken && this.tokenExpiry > now) {
+      return this.accessToken;
+    }
+
+    const tokenUrl = `https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`;
+    
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials'
+    });
+
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: params.toString()
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to get access token: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    this.accessToken = data.access_token;
+    // Token usually valid for 1 hour, refresh 5 minutes early
+    this.tokenExpiry = now + ((data.expires_in - 300) * 1000);
+    
+    return this.accessToken;
+  }
+
+  async sendEmail(recipients: string[], subject: string, htmlContent: string): Promise<void> {
+    if (!this.tenantId || !this.clientId || !this.clientSecret) {
+      console.log('Email not configured. Missing Azure AD credentials.');
+      console.log(`Would send email to ${recipients.join(', ')} with subject: ${subject}`);
+      return;
+    }
+
+    const accessToken = await this.getAccessToken();
+
+    const message = {
+      message: {
+        subject: subject,
+        body: {
+          contentType: 'HTML',
+          content: htmlContent
+        },
+        from: {
+          emailAddress: {
+            address: this.fromAddress
+          }
+        },
+        toRecipients: recipients.map(email => ({
+          emailAddress: {
+            address: email.trim()
+          }
+        }))
+      },
+      saveToSentItems: false
+    };
+
+    // Send as the itadmin user (who has SendAs permission for contracts@)
+    const sendUrl = `https://graph.microsoft.com/v1.0/users/${this.senderUserId}/sendMail`;
+
+    const response = await fetch(sendUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(message)
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to send email: ${response.status} - ${error}`);
+    }
+
+    console.log(`Email sent successfully to ${recipients.length} recipients`);
+  }
+
   generateReportHtml(
     reportData: ReportRow[], 
     weeklyTotals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null },
@@ -192,12 +294,6 @@ class EmailService {
     `;
 
     return html;
-  }
-
-  async sendEmail(recipients: string[], subject: string, htmlContent: string): Promise<void> {
-    // TODO: Implement Microsoft Graph email sending
-    console.log(`Would send email to ${recipients.join(', ')} with subject: ${subject}`);
-    console.log(`HTML length: ${htmlContent.length} characters`);
   }
 }
 
