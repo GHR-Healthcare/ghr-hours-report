@@ -226,30 +226,37 @@ class DatabaseService {
 
   // SNAPSHOTS
 
-  async upsertDailySnapshot(userId: number, shiftDate: string, totalHours: number): Promise<void> {
+  async upsertWeeklySnapshot(userId: number, weekStart: string, dayOfWeek: number, totalHours: number): Promise<void> {
     const pool = await this.getPool();
     await pool.request()
       .input('userId', sql.Int, userId)
-      .input('shiftDate', sql.Date, shiftDate)
+      .input('weekStart', sql.Date, weekStart)
+      .input('dayOfWeek', sql.TinyInt, dayOfWeek)
       .input('totalHours', sql.Decimal(10, 2), totalHours)
       .query(`
-        MERGE dbo.daily_snapshots AS target
-        USING (SELECT @userId AS user_id, @shiftDate AS shift_date, @totalHours AS total_hours) AS source
-        ON target.user_id = source.user_id AND target.shift_date = source.shift_date
+        MERGE dbo.weekly_snapshots AS target
+        USING (SELECT @userId AS user_id, @weekStart AS week_start, @dayOfWeek AS day_of_week, @totalHours AS total_hours) AS source
+        ON target.user_id = source.user_id AND target.week_start = source.week_start AND target.day_of_week = source.day_of_week
         WHEN MATCHED THEN
           UPDATE SET total_hours = source.total_hours, snapshot_taken_at = GETDATE()
         WHEN NOT MATCHED THEN
-          INSERT (user_id, shift_date, total_hours, snapshot_taken_at)
-          VALUES (source.user_id, source.shift_date, source.total_hours, GETDATE());
+          INSERT (user_id, week_start, day_of_week, total_hours, snapshot_taken_at)
+          VALUES (source.user_id, source.week_start, source.day_of_week, source.total_hours, GETDATE());
       `);
+  }
+
+  // Keep old method for backward compatibility during transition
+  async upsertDailySnapshot(userId: number, shiftDate: string, totalHours: number): Promise<void> {
+    // This is now deprecated - use upsertWeeklySnapshot instead
+    console.warn('upsertDailySnapshot is deprecated, use upsertWeeklySnapshot');
   }
 
   async cleanupOldSnapshots(): Promise<number> {
     const pool = await this.getPool();
     const result = await pool.request()
       .query(`
-        DELETE FROM dbo.daily_snapshots 
-        WHERE shift_date < DATEADD(day, -21, GETDATE())
+        DELETE FROM dbo.weekly_snapshots 
+        WHERE week_start < DATEADD(day, -28, GETDATE())
       `);
     return result.rowsAffected[0] || 0;
   }

@@ -272,9 +272,17 @@ class EmailService {
           divTotalFri += recruiterRow.fri;
           divTotalSat += recruiterRow.sat;
           
-          const weeklyTotal = recruiterRow.sun_mon + recruiterRow.tue + recruiterRow.wed + 
-                            recruiterRow.thu + recruiterRow.fri + recruiterRow.sat;
-          const goalMet = isGoalMet(weeklyTotal, goal);
+          // Use the most recent (highest) snapshot value to determine if goal is met
+          // Each column is a snapshot of total weekly hours at that point in time
+          const latestTotal = Math.max(
+            recruiterRow.sun_mon, 
+            recruiterRow.tue, 
+            recruiterRow.wed, 
+            recruiterRow.thu, 
+            recruiterRow.fri, 
+            recruiterRow.sat
+          );
+          const goalMet = isGoalMet(latestTotal, goal);
           
           html += `
             <tr>
@@ -305,8 +313,9 @@ class EmailService {
       }
       
       // Add division total row
-      const divTotal = divTotalSunMon + divTotalTue + divTotalWed + divTotalThu + divTotalFri + divTotalSat;
-      const divGoalMet = isGoalMet(divTotal, divTotalGoal);
+      // Use the most recent (highest) snapshot value to determine if goal is met
+      const divLatestTotal = Math.max(divTotalSunMon, divTotalTue, divTotalWed, divTotalThu, divTotalFri, divTotalSat);
+      const divGoalMet = isGoalMet(divLatestTotal, divTotalGoal);
       const totalRowStyle = 'border: 1px solid #ddd; padding: 8px; font-weight: bold;';
       const totalCellStyle = divGoalMet 
         ? 'border: 1px solid #ddd; padding: 8px; text-align: right; font-weight: bold; background-color: #90EE90;'

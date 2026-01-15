@@ -229,240 +229,210 @@ app.http('triggerCalculation', {
   }
 });
 
-// Calculate for a single day (much faster for testing)
-app.http('calculateDay', {
+// Calculate weekly totals - this is the main calculation used for reports
+// It calculates total hours for the entire week (Sun-Sat) for this week and next week
+// Only updates the current day's snapshot slot, preserving previous days
+app.http('calculateWeekly', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
-  route: 'calculate/day',
+  route: 'calculate/weekly',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      // Get date from query param or use today
-      const dateParam = request.query.get('date');
-      const targetDate = dateParam ? new Date(dateParam) : new Date();
-      const dateStr = targetDate.toISOString().split('T')[0];
+      const now = new Date();
       
-      context.log(`Calculating hours for ${dateStr}...`);
+      // Determine current day of week for snapshot slot (0=Sun/Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat)
+      const currentDayOfWeek = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, etc.
+      let snapshotDayOfWeek: number;
+      if (currentDayOfWeek === 0 || currentDayOfWeek === 1) {
+        snapshotDayOfWeek = 0; // Sun/Mon
+      } else {
+        snapshotDayOfWeek = currentDayOfWeek - 1; // Tue=1, Wed=2, Thu=3, Fri=4, Sat=5
+      }
+      
+      // Calculate week boundaries
+      // This week: Sunday to Saturday
+      const thisWeekSunday = new Date(now);
+      thisWeekSunday.setDate(now.getDate() - currentDayOfWeek);
+      thisWeekSunday.setHours(0, 0, 0, 0);
+      
+      const thisWeekSaturday = new Date(thisWeekSunday);
+      thisWeekSaturday.setDate(thisWeekSunday.getDate() + 6);
+      
+      // Next week: following Sunday to Saturday
+      const nextWeekSunday = new Date(thisWeekSunday);
+      nextWeekSunday.setDate(thisWeekSunday.getDate() + 7);
+      
+      const nextWeekSaturday = new Date(nextWeekSunday);
+      nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
+      
+      // Last week: previous Sunday to Saturday (only update if we're on Sun/Mon)
+      const lastWeekSunday = new Date(thisWeekSunday);
+      lastWeekSunday.setDate(thisWeekSunday.getDate() - 7);
+      
+      const lastWeekSaturday = new Date(lastWeekSunday);
+      lastWeekSaturday.setDate(lastWeekSunday.getDate() + 6);
+      
+      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+      
+      context.log(`Calculating weekly hours...`);
+      context.log(`Last week: ${formatDate(lastWeekSunday)} to ${formatDate(lastWeekSaturday)}`);
+      context.log(`This week: ${formatDate(thisWeekSunday)} to ${formatDate(thisWeekSaturday)}`);
+      context.log(`Next week: ${formatDate(nextWeekSunday)} to ${formatDate(nextWeekSaturday)}`);
+      context.log(`Snapshot day of week: ${snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek]})`);
       
       // Get configured recruiters
       const configuredRecruiters = await databaseService.getRecruiters(true);
       const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
       context.log(`Found ${configuredUserIds.size} configured recruiters`);
       
-      // Get orders for this day
-      const allOrders = await clearConnectService.getOrders(dateStr, dateStr);
-      context.log(`Found ${allOrders.length} total orders for ${dateStr}`);
-      
-      // Filter orders by region - only include Nursing, Acute, or Temp to Perm
-      const orders = allOrders.filter(order => {
-        const regionName = (order.regionName || '').toLowerCase();
-        return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
-      });
-      context.log(`Filtered to ${orders.length} Nursing/Acute orders`);
-      
-      // Get unique temps
-      const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
-      const tempsMap = await clearConnectService.getTempsBatch(tempIds);
-      
-      // Calculate hours by recruiter
-      const hoursByRecruiter: Record<number, number> = {};
+      const results: any = {
+        lastWeek: { weekStart: formatDate(lastWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: false },
+        thisWeek: { weekStart: formatDate(thisWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: true },
+        nextWeek: { weekStart: formatDate(nextWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: true }
+      };
       const newRecruiters: any[] = [];
       
-      for (const order of orders) {
-        const temp = tempsMap.get(order.tempId);
-        if (!temp || !temp.staffingSpecialist) continue;
-        
-        const recruiterId = parseInt(temp.staffingSpecialist, 10);
-        
-        // Auto-add recruiter if not in database
-        if (!configuredUserIds.has(recruiterId)) {
-          try {
-            const user = await clearConnectService.getUser(temp.staffingSpecialist);
-            const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
-            
-            const newRecruiter = await databaseService.createRecruiter({
-              user_id: recruiterId,
-              user_name: userName,
-              division_id: 1,
-              weekly_goal: 0,
-              display_order: 99
-            });
-            
-            configuredUserIds.add(recruiterId);
-            newRecruiters.push({ userId: recruiterId, name: userName });
-            context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
-          } catch (addError) {
-            context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
-            continue;
-          }
-        }
-        
-        const startTime = new Date(order.shiftStartTime);
-        const endTime = new Date(order.shiftEndTime);
-        const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
-        
-        const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-        const workedMinutes = totalMinutes - lunchMinutes;
-        const hours = workedMinutes / 60;
-        
-        if (!hoursByRecruiter[recruiterId]) {
-          hoursByRecruiter[recruiterId] = 0;
-        }
-        hoursByRecruiter[recruiterId] += hours;
+      // Process this week and next week (always update current day slot)
+      // Only process last week on Sun/Mon (day 0) to capture final totals
+      const weeksToProcess: Array<[string, Date, Date, boolean]> = [
+        ['thisWeek', thisWeekSunday, thisWeekSaturday, true],
+        ['nextWeek', nextWeekSunday, nextWeekSaturday, true]
+      ];
+      
+      // On Sunday/Monday, also update last week's final snapshot
+      if (snapshotDayOfWeek === 0) {
+        weeksToProcess.unshift(['lastWeek', lastWeekSunday, lastWeekSaturday, true]);
+        results.lastWeek.updated = true;
       }
       
-      // Save snapshots
-      let saved = 0;
-      for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
-        const roundedHours = Math.round(hours * 100) / 100;
-        await databaseService.upsertDailySnapshot(parseInt(userIdStr), dateStr, roundedHours);
-        saved++;
+      for (const [weekName, weekSunday, weekSaturday, shouldUpdate] of weeksToProcess) {
+        if (!shouldUpdate) continue;
+        
+        const weekStart = formatDate(weekSunday as Date);
+        const weekEnd = formatDate(weekSaturday as Date);
+        
+        context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
+        
+        // Get all orders for the week
+        const allOrders = await clearConnectService.getOrders(weekStart, weekEnd);
+        results[weekName].totalOrders = allOrders.length;
+        
+        // Filter orders by region
+        const orders = allOrders.filter(order => {
+          const regionName = (order.regionName || '').toLowerCase();
+          return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
+        });
+        results[weekName].filteredOrders = orders.length;
+        
+        context.log(`${weekName}: ${orders.length} filtered orders from ${allOrders.length} total`);
+        
+        // Get unique temps
+        const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
+        const tempsMap = await clearConnectService.getTempsBatch(tempIds);
+        
+        // Calculate hours by recruiter
+        const hoursByRecruiter: Record<number, number> = {};
+        
+        for (const order of orders) {
+          const temp = tempsMap.get(order.tempId);
+          if (!temp || !temp.staffingSpecialist) continue;
+          
+          const recruiterId = parseInt(temp.staffingSpecialist, 10);
+          
+          // Auto-add recruiter if not in database
+          if (!configuredUserIds.has(recruiterId)) {
+            try {
+              const user = await clearConnectService.getUser(temp.staffingSpecialist);
+              const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+              
+              await databaseService.createRecruiter({
+                user_id: recruiterId,
+                user_name: userName,
+                division_id: 1,
+                weekly_goal: 0,
+                display_order: 99
+              });
+              
+              configuredUserIds.add(recruiterId);
+              newRecruiters.push({ userId: recruiterId, name: userName });
+              context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+            } catch (addError) {
+              context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+              continue;
+            }
+          }
+          
+          const startTime = new Date(order.shiftStartTime);
+          const endTime = new Date(order.shiftEndTime);
+          const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
+          
+          const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+          const workedMinutes = totalMinutes - lunchMinutes;
+          const hours = workedMinutes / 60;
+          
+          if (!hoursByRecruiter[recruiterId]) {
+            hoursByRecruiter[recruiterId] = 0;
+          }
+          hoursByRecruiter[recruiterId] += hours;
+        }
+        
+        // Round and save snapshots - ONLY for current day slot
+        for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
+          const roundedHours = Math.round(hours * 100) / 100;
+          hoursByRecruiter[parseInt(userIdStr)] = roundedHours;
+          await databaseService.upsertWeeklySnapshot(
+            parseInt(userIdStr), 
+            weekStart, 
+            snapshotDayOfWeek, 
+            roundedHours
+          );
+        }
+        
+        results[weekName].hours = hoursByRecruiter;
       }
       
       return { 
         jsonBody: { 
-          date: dateStr,
-          totalOrders: allOrders.length,
-          filteredOrders: orders.length,
-          tempsFound: tempsMap.size,
-          recruitersWithHours: Object.keys(hoursByRecruiter).length,
-          snapshotsSaved: saved,
+          calculatedAt: now.toISOString(),
+          snapshotDayOfWeek,
+          snapshotDayName: ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek],
           newRecruitersAdded: newRecruiters,
-          hoursSummary: hoursByRecruiter
+          results
         } 
       };
     } catch (error) {
-      context.error('Error calculating day:', error);
+      context.error('Error calculating weekly:', error);
       return { status: 500, jsonBody: { error: 'Failed to calculate', details: String(error) } };
     }
   }
 });
 
-// Calculate for a date range (with progress)
+// Legacy endpoint - keeping for backward compatibility
+app.http('calculateDay', {
+  methods: ['GET', 'POST'],
+  authLevel: 'anonymous',
+  route: 'calculate/day',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    // Redirect to weekly calculation
+    context.log('calculateDay is deprecated, redirecting to calculateWeekly');
+    return { 
+      status: 301, 
+      jsonBody: { message: 'Use /api/calculate/weekly instead' } 
+    };
+  }
+});
+
+// Legacy endpoint - redirect to weekly calculation
 app.http('calculateRange', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
   route: 'calculate/range',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    try {
-      const startParam = request.query.get('start');
-      const endParam = request.query.get('end');
-      
-      if (!startParam || !endParam) {
-        return { 
-          status: 400, 
-          jsonBody: { error: 'Missing start or end date. Use ?start=2026-01-12&end=2026-01-14' } 
-        };
-      }
-      
-      const startDate = new Date(startParam);
-      const endDate = new Date(endParam);
-      
-      // Get configured recruiters (will be updated as we auto-add)
-      const configuredRecruiters = await databaseService.getRecruiters(true);
-      const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
-      context.log(`Starting with ${configuredUserIds.size} configured recruiters`);
-      
-      const results: any[] = [];
-      const allNewRecruiters: any[] = [];
-      const currentDate = new Date(startDate);
-      
-      while (currentDate <= endDate) {
-        const dateStr = currentDate.toISOString().split('T')[0];
-        context.log(`Processing ${dateStr}...`);
-        
-        try {
-          const allOrders = await clearConnectService.getOrders(dateStr, dateStr);
-          
-          // Filter orders by region - only include Nursing, Acute, or Temp to Perm
-          const orders = allOrders.filter(order => {
-            const regionName = (order.regionName || '').toLowerCase();
-            return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
-          });
-          
-          const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
-          const tempsMap = await clearConnectService.getTempsBatch(tempIds);
-          
-          const hoursByRecruiter: Record<number, number> = {};
-          
-          for (const order of orders) {
-            const temp = tempsMap.get(order.tempId);
-            if (!temp || !temp.staffingSpecialist) continue;
-            
-            const recruiterId = parseInt(temp.staffingSpecialist, 10);
-            
-            // Auto-add recruiter if not in database
-            if (!configuredUserIds.has(recruiterId)) {
-              try {
-                const user = await clearConnectService.getUser(temp.staffingSpecialist);
-                const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
-                
-                await databaseService.createRecruiter({
-                  user_id: recruiterId,
-                  user_name: userName,
-                  division_id: 1,
-                  weekly_goal: 0,
-                  display_order: 99
-                });
-                
-                configuredUserIds.add(recruiterId);
-                allNewRecruiters.push({ userId: recruiterId, name: userName });
-                context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
-              } catch (addError) {
-                context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
-                continue;
-              }
-            }
-            
-            const startTime = new Date(order.shiftStartTime);
-            const endTime = new Date(order.shiftEndTime);
-            const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
-            
-            const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-            const workedMinutes = totalMinutes - lunchMinutes;
-            const hours = workedMinutes / 60;
-            
-            if (!hoursByRecruiter[recruiterId]) {
-              hoursByRecruiter[recruiterId] = 0;
-            }
-            hoursByRecruiter[recruiterId] += hours;
-          }
-          
-          // Save snapshots
-          for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
-            const roundedHours = Math.round(hours * 100) / 100;
-            await databaseService.upsertDailySnapshot(parseInt(userIdStr), dateStr, roundedHours);
-          }
-          
-          results.push({
-            date: dateStr,
-            totalOrders: allOrders.length,
-            filteredOrders: orders.length,
-            recruiters: Object.keys(hoursByRecruiter).length,
-            status: 'success'
-          });
-        } catch (err) {
-          results.push({
-            date: dateStr,
-            status: 'error',
-            error: String(err)
-          });
-        }
-        
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-      
-      return { 
-        jsonBody: { 
-          range: { start: startParam, end: endParam },
-          daysProcessed: results.length,
-          newRecruitersAdded: allNewRecruiters,
-          results
-        } 
-      };
-    } catch (error) {
-      context.error('Error calculating range:', error);
-      return { status: 500, jsonBody: { error: 'Failed to calculate range', details: String(error) } };
-    }
+    context.log('calculateRange is deprecated, use calculateWeekly instead');
+    return { 
+      status: 301, 
+      jsonBody: { message: 'Use /api/calculate/weekly instead' } 
+    };
   }
 });
 
@@ -526,7 +496,7 @@ app.http('sendTestEmail', {
 app.http('adminPortal', {
   methods: ['GET'],
   authLevel: 'anonymous',
-  route: 'portal',
+  route: 'admin',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -673,21 +643,10 @@ app.http('adminPortal', {
 
     <!-- Calculate Panel -->
     <div class="panel" id="calculate-panel">
-      <h2>Recalculate Hours</h2>
-      <p style="color: #6b7280; margin-bottom: 1.5rem;">Re-fetch hours from ClearConnect for a date range. Use this if data looks incorrect.</p>
+      <h2>Recalculate Weekly Hours</h2>
+      <p style="color: #6b7280; margin-bottom: 1.5rem;">Re-fetch hours from ClearConnect for last week, this week, and next week. Use this if data looks incorrect or to refresh before sending a test email.</p>
       
-      <div class="form-row">
-        <div class="form-group">
-          <label>Start Date</label>
-          <input type="date" id="calc-start-date">
-        </div>
-        <div class="form-group">
-          <label>End Date</label>
-          <input type="date" id="calc-end-date">
-        </div>
-      </div>
-      
-      <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Calculation</button>
+      <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
       
       <div id="calc-results" style="margin-top: 1.5rem;"></div>
     </div>
@@ -936,69 +895,52 @@ app.http('adminPortal', {
 
     // Calculation
     async function runCalculation() {
-      const start = document.getElementById('calc-start-date').value;
-      const end = document.getElementById('calc-end-date').value;
-      
-      if (!start || !end) {
-        showAlert('Please select both start and end dates', 'error');
-        return;
-      }
-      
       const btn = document.getElementById('calc-btn');
       const results = document.getElementById('calc-results');
       btn.textContent = 'Running...';
       btn.disabled = true;
-      results.innerHTML = '<p>Calculating... this may take a minute.</p>';
+      results.innerHTML = '<p>Calculating weekly hours... this may take a minute.</p>';
       
       try {
-        const res = await fetch(API_BASE + '/calculate/range?start=' + start + '&end=' + end);
+        const res = await fetch(API_BASE + '/calculate/weekly');
         const data = await res.json();
         
         if (res.ok) {
           let html = '<h3>Results</h3>';
-          html += '<p>Processed ' + data.daysProcessed + ' days</p>';
+          html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
+          html += '<p>Snapshot day of week: ' + ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][data.snapshotDayOfWeek] + '</p>';
           
           if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
             html += '<p><strong>New recruiters added:</strong> ' + 
               data.newRecruitersAdded.map(r => r.name).join(', ') + '</p>';
           }
           
-          html += '<table><thead><tr><th>Date</th><th>Total Orders</th><th>Filtered</th><th>Recruiters</th><th>Status</th></tr></thead><tbody>';
-          data.results.forEach(r => {
-            html += '<tr><td>' + r.date + '</td><td>' + (r.totalOrders || 0) + '</td><td>' + 
-              (r.filteredOrders || 0) + '</td><td>' + (r.recruiters || 0) + '</td><td>' + r.status + '</td></tr>';
-          });
+          html += '<table><thead><tr><th>Week</th><th>Total Orders</th><th>Filtered</th><th>Recruiters</th></tr></thead><tbody>';
+          for (const [weekName, weekData] of Object.entries(data.results)) {
+            const week = weekData;
+            html += '<tr><td>' + weekName + ' (' + week.weekStart + ')</td><td>' + week.totalOrders + '</td><td>' + 
+              week.filteredOrders + '</td><td>' + Object.keys(week.hours).length + '</td></tr>';
+          }
           html += '</tbody></table>';
           
           results.innerHTML = html;
           showAlert('Calculation complete!');
-          loadRecruiters(); // Refresh in case new recruiters were added
+          loadRecruiters();
         } else {
           results.innerHTML = '<p class="alert alert-error">Error: ' + (data.error || 'Unknown error') + '</p>';
         }
       } catch (err) {
         results.innerHTML = '<p class="alert alert-error">Error: ' + err.message + '</p>';
       } finally {
-        btn.textContent = 'Run Calculation';
+        btn.textContent = 'Run Weekly Calculation';
         btn.disabled = false;
       }
-    }
-
-    // Set default dates
-    function setDefaultDates() {
-      const today = new Date();
-      const twoWeeksAgo = new Date(today);
-      twoWeeksAgo.setDate(today.getDate() - 14);
-      
-      document.getElementById('calc-end-date').value = today.toISOString().split('T')[0];
-      document.getElementById('calc-start-date').value = twoWeeksAgo.toISOString().split('T')[0];
     }
 
     // Initialize
     async function init() {
       await loadDivisions();
       await loadRecruiters();
-      setDefaultDates();
       document.getElementById('lastUpdated').textContent = 'Loaded: ' + new Date().toLocaleString();
     }
 

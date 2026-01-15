@@ -270,6 +270,64 @@ export class ClearConnectService {
     return results;
   }
 
+  async calculateWeeklyHours(weekStart: string, weekEnd: string): Promise<DailyHoursByRecruiter> {
+    const hoursByRecruiter: DailyHoursByRecruiter = {};
+
+    const allOrders = await this.getOrders(weekStart, weekEnd);
+
+    // Filter orders to only Nursing, Acute, or Temp to Perm regions
+    const filteredOrders = allOrders.filter(order => {
+      const regionName = (order.regionName || '').toLowerCase();
+      return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
+    });
+
+    console.log(`Found ${filteredOrders.length} filtered orders for week ${weekStart} to ${weekEnd} (from ${allOrders.length} total)`);
+
+    // Get all unique temp IDs
+    const tempIds = [...new Set(filteredOrders.map(o => o.tempId).filter(id => id))];
+    console.log(`Looking up ${tempIds.length} unique temps...`);
+
+    // Batch fetch all temps at once
+    const tempsMap = await this.getTempsBatch(tempIds);
+    console.log(`Retrieved ${tempsMap.size} temps`);
+
+    // Process orders using cached temp data
+    for (const order of filteredOrders) {
+      try {
+        const temp = tempsMap.get(order.tempId);
+        if (!temp || !temp.staffingSpecialist) {
+          continue;
+        }
+
+        const recruiterId = parseInt(temp.staffingSpecialist, 10);
+
+        const startTime = new Date(order.shiftStartTime);
+        const endTime = new Date(order.shiftEndTime);
+        const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
+
+        const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        const workedMinutes = totalMinutes - lunchMinutes;
+        const hours = workedMinutes / 60;
+
+        if (!hoursByRecruiter[recruiterId]) {
+          hoursByRecruiter[recruiterId] = 0;
+        }
+        hoursByRecruiter[recruiterId] += hours;
+
+      } catch (error) {
+        console.error(`Error processing order ${order.orderId}:`, error);
+      }
+    }
+
+    // Round to 2 decimal places
+    Object.keys(hoursByRecruiter).forEach(key => {
+      const numKey = parseInt(key);
+      hoursByRecruiter[numKey] = Math.round(hoursByRecruiter[numKey] * 100) / 100;
+    });
+
+    return hoursByRecruiter;
+  }
+
   async calculateHoursForDate(targetDate: string, nextDate: string): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
