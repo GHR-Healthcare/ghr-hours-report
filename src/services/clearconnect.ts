@@ -273,15 +273,19 @@ export class ClearConnectService {
   async calculateHoursForDate(targetDate: string, nextDate: string): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
-    const orders = await this.getOrders(targetDate, nextDate);
+    const allOrders = await this.getOrders(targetDate, nextDate);
 
-    // Filter orders to only those starting on targetDate
-    const targetDateOrders = orders.filter(order => {
+    // Filter orders to only those starting on targetDate AND in Nursing/Acute/Temp to Perm regions
+    const targetDateOrders = allOrders.filter(order => {
       const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
-      return orderDate === targetDate;
+      if (orderDate !== targetDate) return false;
+      
+      // Region filter - only include Nursing, Acute, or Temp to Perm
+      const regionName = (order.regionName || '').toLowerCase();
+      return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
     });
 
-    console.log(`Found ${targetDateOrders.length} orders for ${targetDate}`);
+    console.log(`Found ${targetDateOrders.length} filtered orders for ${targetDate} (from ${allOrders.length} total)`);
 
     // Get all unique temp IDs
     const tempIds = [...new Set(targetDateOrders.map(o => o.tempId).filter(id => id))];
