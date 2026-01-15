@@ -143,11 +143,10 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
       
       const startTime = new Date(order.shiftStartTime);
       const endTime = new Date(order.shiftEndTime);
-      const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
       
+      // Give credit for full shift time (no lunch deduction)
       const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-      const workedMinutes = totalMinutes - lunchMinutes;
-      const hours = workedMinutes / 60;
+      const hours = totalMinutes / 60;
       
       if (!hoursByRecruiter[recruiterId]) {
         hoursByRecruiter[recruiterId] = 0;
