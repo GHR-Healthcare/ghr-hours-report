@@ -115,26 +115,30 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
       
       const recruiterId = parseInt(temp.staffingSpecialist, 10);
       
-      // Auto-add recruiter if not in database
+      // Auto-add recruiter if not in database (including deleted - won't re-add deleted recruiters)
       if (!configuredUserIds.has(recruiterId)) {
-        try {
-          const user = await clearConnectService.getUser(temp.staffingSpecialist);
-          const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
-          
-          await databaseService.createRecruiter({
-            user_id: recruiterId,
-            user_name: userName,
-            division_id: 1,
-            weekly_goal: 0,
-            display_order: 99
-          });
-          
-          configuredUserIds.add(recruiterId);
-          context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
-        } catch (addError) {
-          context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
-          continue;
+        // Check if recruiter exists at all (including deleted)
+        const exists = await databaseService.recruiterExists(recruiterId);
+        if (!exists) {
+          try {
+            const user = await clearConnectService.getUser(temp.staffingSpecialist);
+            const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+            
+            await databaseService.createRecruiter({
+              user_id: recruiterId,
+              user_name: userName,
+              division_id: 1,
+              weekly_goal: 0,
+              display_order: 99
+            });
+            
+            context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+          } catch (addError) {
+            context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+          }
         }
+        // Mark as seen so we don't check again this run
+        configuredUserIds.add(recruiterId);
       }
       
       const startTime = new Date(order.shiftStartTime);
@@ -165,7 +169,8 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
 }
 
 // Calculate hours and send email
-async function runReportAndEmail(context: InvocationContext, includeLastWeek: boolean = false): Promise<void> {
+// isLastWeekRecap: if true, this is the Monday morning "last week final" email
+async function runReportAndEmail(context: InvocationContext, isLastWeekRecap: boolean = false): Promise<void> {
   try {
     // First, calculate weekly hours from ClearConnect
     context.log('Calculating weekly hours from ClearConnect...');
@@ -173,9 +178,10 @@ async function runReportAndEmail(context: InvocationContext, includeLastWeek: bo
     context.log('Calculation complete');
 
     // Get report data and generate HTML
+    // Daily emails always include all 3 weeks (last, this, next)
     const reportData = await databaseService.getReportData();
     const weeklyTotals = await databaseService.getWeeklyTotals();
-    const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
+    const html = emailService.generateReportHtml(reportData, weeklyTotals, true); // Always include last week
 
     // Send email
     const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
@@ -185,7 +191,7 @@ async function runReportAndEmail(context: InvocationContext, includeLastWeek: bo
       return;
     }
 
-    const subject = includeLastWeek ? 'Daily Hours - Last Week' : 'Daily Hours';
+    const subject = isLastWeekRecap ? 'Weekly Hours - Last Week Final Recap' : 'Daily Hours';
     await emailService.sendEmail(recipients, subject, html);
     
     context.log(`Email sent to ${recipients.length} recipients`);
@@ -201,17 +207,17 @@ app.timer('dailyReport8am', {
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('8 AM daily report triggered');
     
-    // Check if Monday - include last week recap
+    // Check if Monday - send last week recap first
     const today = new Date();
     const isMonday = today.getDay() === 1;
     
-    await runReportAndEmail(context, false);
-    
-    // On Monday, also send last week recap
     if (isMonday) {
-      context.log('Monday detected - sending last week recap');
-      await runReportAndEmail(context, true);
+      context.log('Monday detected - sending last week final recap');
+      await runReportAndEmail(context, true); // Last week recap email
     }
+    
+    // Always send the regular daily report
+    await runReportAndEmail(context, false);
   }
 });
 

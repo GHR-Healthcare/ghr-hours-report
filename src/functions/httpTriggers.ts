@@ -348,27 +348,31 @@ app.http('calculateWeekly', {
           
           const recruiterId = parseInt(temp.staffingSpecialist, 10);
           
-          // Auto-add recruiter if not in database
+          // Auto-add recruiter if not in database (including deleted - won't re-add deleted recruiters)
           if (!configuredUserIds.has(recruiterId)) {
-            try {
-              const user = await clearConnectService.getUser(temp.staffingSpecialist);
-              const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
-              
-              await databaseService.createRecruiter({
-                user_id: recruiterId,
-                user_name: userName,
-                division_id: 1,
-                weekly_goal: 0,
-                display_order: 99
-              });
-              
-              configuredUserIds.add(recruiterId);
-              newRecruiters.push({ userId: recruiterId, name: userName });
-              context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
-            } catch (addError) {
-              context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
-              continue;
+            // Check if recruiter exists at all (including deleted)
+            const exists = await databaseService.recruiterExists(recruiterId);
+            if (!exists) {
+              try {
+                const user = await clearConnectService.getUser(temp.staffingSpecialist);
+                const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+                
+                await databaseService.createRecruiter({
+                  user_id: recruiterId,
+                  user_name: userName,
+                  division_id: 1,
+                  weekly_goal: 0,
+                  display_order: 99
+                });
+                
+                newRecruiters.push({ userId: recruiterId, name: userName });
+                context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+              } catch (addError) {
+                context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+              }
             }
+            // Mark as seen so we don't check again this run
+            configuredUserIds.add(recruiterId);
           }
           
           const startTime = new Date(order.shiftStartTime);

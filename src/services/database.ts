@@ -113,9 +113,10 @@ class DatabaseService {
 
   async getRecruiters(includeInactive = false): Promise<RecruiterConfig[]> {
     const pool = await this.getPool();
+    // Never include deleted recruiters, but optionally include inactive ones
     const query = includeInactive
-      ? 'SELECT * FROM dbo.recruiter_config ORDER BY division_id, display_order'
-      : 'SELECT * FROM dbo.recruiter_config WHERE is_active = 1 ORDER BY division_id, display_order';
+      ? 'SELECT * FROM dbo.recruiter_config WHERE is_deleted = 0 ORDER BY division_id, display_order'
+      : 'SELECT * FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0 ORDER BY division_id, display_order';
     
     const result = await pool.request().query(query);
     return result.recordset;
@@ -202,11 +203,26 @@ class DatabaseService {
 
   async deleteRecruiter(configId: number): Promise<boolean> {
     const pool = await this.getPool();
+    // Soft delete - set is_deleted = 1 instead of actually removing
     const result = await pool.request()
       .input('configId', sql.Int, configId)
-      .query('DELETE FROM dbo.recruiter_config WHERE config_id = @configId');
+      .query(`
+        UPDATE dbo.recruiter_config 
+        SET is_deleted = 1, is_active = 0, modified_at = GETDATE()
+        WHERE config_id = @configId
+      `);
     
     return (result.rowsAffected[0] || 0) > 0;
+  }
+
+  // Check if a recruiter exists (including deleted ones) by user_id
+  async recruiterExists(userId: number): Promise<boolean> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query('SELECT 1 FROM dbo.recruiter_config WHERE user_id = @userId');
+    
+    return result.recordset.length > 0;
   }
 
   // REGIONS
