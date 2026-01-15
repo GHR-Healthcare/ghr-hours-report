@@ -243,13 +243,21 @@ app.http('calculateDay', {
       
       context.log(`Calculating hours for ${dateStr}...`);
       
-      const nextDate = new Date(targetDate);
-      nextDate.setDate(nextDate.getDate() + 1);
-      const nextDateStr = nextDate.toISOString().split('T')[0];
+      // Get configured recruiters
+      const configuredRecruiters = await databaseService.getRecruiters(true);
+      const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
+      context.log(`Found ${configuredUserIds.size} configured recruiters`);
       
       // Get orders for this day
-      const orders = await clearConnectService.getOrders(dateStr, dateStr);
-      context.log(`Found ${orders.length} orders for ${dateStr}`);
+      const allOrders = await clearConnectService.getOrders(dateStr, dateStr);
+      context.log(`Found ${allOrders.length} total orders for ${dateStr}`);
+      
+      // Filter orders by region - only include Nursing or Acute
+      const orders = allOrders.filter(order => {
+        const regionName = (order.regionName || '').toLowerCase();
+        return regionName.includes('nursing') || regionName.includes('acute');
+      });
+      context.log(`Filtered to ${orders.length} Nursing/Acute orders`);
       
       // Get unique temps
       const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
@@ -257,12 +265,37 @@ app.http('calculateDay', {
       
       // Calculate hours by recruiter
       const hoursByRecruiter: Record<number, number> = {};
+      const newRecruiters: any[] = [];
       
       for (const order of orders) {
         const temp = tempsMap.get(order.tempId);
         if (!temp || !temp.staffingSpecialist) continue;
         
         const recruiterId = parseInt(temp.staffingSpecialist, 10);
+        
+        // Auto-add recruiter if not in database
+        if (!configuredUserIds.has(recruiterId)) {
+          try {
+            const user = await clearConnectService.getUser(temp.staffingSpecialist);
+            const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+            
+            const newRecruiter = await databaseService.createRecruiter({
+              user_id: recruiterId,
+              user_name: userName,
+              division_id: 1,
+              weekly_goal: 0,
+              display_order: 99
+            });
+            
+            configuredUserIds.add(recruiterId);
+            newRecruiters.push({ userId: recruiterId, name: userName });
+            context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+          } catch (addError) {
+            context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+            continue;
+          }
+        }
+        
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
         const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
@@ -288,10 +321,12 @@ app.http('calculateDay', {
       return { 
         jsonBody: { 
           date: dateStr,
-          ordersProcessed: orders.length,
+          totalOrders: allOrders.length,
+          filteredOrders: orders.length,
           tempsFound: tempsMap.size,
           recruitersWithHours: Object.keys(hoursByRecruiter).length,
           snapshotsSaved: saved,
+          newRecruitersAdded: newRecruiters,
           hoursSummary: hoursByRecruiter
         } 
       };
@@ -322,7 +357,13 @@ app.http('calculateRange', {
       const startDate = new Date(startParam);
       const endDate = new Date(endParam);
       
+      // Get configured recruiters (will be updated as we auto-add)
+      const configuredRecruiters = await databaseService.getRecruiters(true);
+      const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
+      context.log(`Starting with ${configuredUserIds.size} configured recruiters`);
+      
       const results: any[] = [];
+      const allNewRecruiters: any[] = [];
       const currentDate = new Date(startDate);
       
       while (currentDate <= endDate) {
@@ -330,7 +371,14 @@ app.http('calculateRange', {
         context.log(`Processing ${dateStr}...`);
         
         try {
-          const orders = await clearConnectService.getOrders(dateStr, dateStr);
+          const allOrders = await clearConnectService.getOrders(dateStr, dateStr);
+          
+          // Filter orders by region - only include Nursing or Acute
+          const orders = allOrders.filter(order => {
+            const regionName = (order.regionName || '').toLowerCase();
+            return regionName.includes('nursing') || regionName.includes('acute');
+          });
+          
           const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
           const tempsMap = await clearConnectService.getTempsBatch(tempIds);
           
@@ -341,6 +389,30 @@ app.http('calculateRange', {
             if (!temp || !temp.staffingSpecialist) continue;
             
             const recruiterId = parseInt(temp.staffingSpecialist, 10);
+            
+            // Auto-add recruiter if not in database
+            if (!configuredUserIds.has(recruiterId)) {
+              try {
+                const user = await clearConnectService.getUser(temp.staffingSpecialist);
+                const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+                
+                await databaseService.createRecruiter({
+                  user_id: recruiterId,
+                  user_name: userName,
+                  division_id: 1,
+                  weekly_goal: 0,
+                  display_order: 99
+                });
+                
+                configuredUserIds.add(recruiterId);
+                allNewRecruiters.push({ userId: recruiterId, name: userName });
+                context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+              } catch (addError) {
+                context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+                continue;
+              }
+            }
+            
             const startTime = new Date(order.shiftStartTime);
             const endTime = new Date(order.shiftEndTime);
             const lunchMinutes = parseInt(order.lessLunchMin, 10) || 0;
@@ -363,7 +435,8 @@ app.http('calculateRange', {
           
           results.push({
             date: dateStr,
-            orders: orders.length,
+            totalOrders: allOrders.length,
+            filteredOrders: orders.length,
             recruiters: Object.keys(hoursByRecruiter).length,
             status: 'success'
           });
@@ -382,6 +455,7 @@ app.http('calculateRange', {
         jsonBody: { 
           range: { start: startParam, end: endParam },
           daysProcessed: results.length,
+          newRecruitersAdded: allNewRecruiters,
           results
         } 
       };
