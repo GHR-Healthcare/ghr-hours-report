@@ -496,7 +496,7 @@ app.http('sendTestEmail', {
 app.http('adminPortal', {
   methods: ['GET'],
   authLevel: 'anonymous',
-  route: 'admin',
+  route: 'portal',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     const html = `<!DOCTYPE html>
 <html lang="en">
