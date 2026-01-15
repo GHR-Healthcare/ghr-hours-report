@@ -55,21 +55,21 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
   
   context.log(`Calculating weekly hours, snapshot day: ${weekInfo.snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][weekInfo.snapshotDayOfWeek]})`);
   
+  // Get region IDs from database
+  const regionIds = await databaseService.getActiveRegionIds();
+  const regionIdString = regionIds.join(',');
+  context.log(`Using ${regionIds.length} region IDs from database`);
+  
   // Get configured recruiters
   const configuredRecruiters = await databaseService.getRecruiters(true);
   const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
   
-  // Determine which weeks to process
-  // Always process this week and next week
-  // Only process last week on Sun/Mon (to capture final totals for Monday morning report)
+  // Process all three weeks
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
+    { name: 'lastWeek', data: weekInfo.lastWeek },
     { name: 'thisWeek', data: weekInfo.thisWeek },
     { name: 'nextWeek', data: weekInfo.nextWeek }
   ];
-  
-  if (weekInfo.snapshotDayOfWeek === 0) {
-    weeksToProcess.unshift({ name: 'lastWeek', data: weekInfo.lastWeek });
-  }
   
   // Process each week
   for (const { name: weekName, data: weekData } of weeksToProcess) {
@@ -78,25 +78,38 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
     
     context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
     
-    // Get all orders for the week
-    const allOrders = await clearConnectService.getOrders(weekStart, weekEnd);
+    // Fetch day by day to avoid API pagination limits (3000 record limit)
+    let allOrders: any[] = [];
+    const currentDate = new Date(weekData.sunday);
     
-    // Filter orders by region
-    const orders = allOrders.filter(order => {
-      const regionName = (order.regionName || '').toLowerCase();
-      return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
-    });
+    while (currentDate <= weekData.saturday) {
+      const dateStr = formatDate(currentDate);
+      context.log(`  Fetching ${dateStr}...`);
+      
+      const dayOrders = await clearConnectService.getOrders(dateStr, dateStr, regionIdString);
+      
+      // Filter to only orders starting on this date
+      const filteredOrders = dayOrders.filter((order: any) => {
+        const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
+        return orderDate === dateStr;
+      });
+      
+      allOrders = allOrders.concat(filteredOrders);
+      context.log(`    Got ${filteredOrders.length} orders for ${dateStr}`);
+      
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
     
-    context.log(`${weekName}: ${orders.length} filtered orders from ${allOrders.length} total`);
+    context.log(`${weekName}: ${allOrders.length} total orders`);
     
     // Get unique temps
-    const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
-    const tempsMap = await clearConnectService.getTempsBatch(tempIds);
+    const tempIds = [...new Set(allOrders.map((o: any) => o.tempId).filter((id: any) => id))];
+    const tempsMap = await clearConnectService.getTempsBatch(tempIds as string[]);
     
     // Calculate hours by recruiter
     const hoursByRecruiter: Record<number, number> = {};
     
-    for (const order of orders) {
+    for (const order of allOrders) {
       const temp = tempsMap.get(order.tempId);
       if (!temp || !temp.staffingSpecialist) continue;
       

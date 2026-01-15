@@ -57,12 +57,19 @@ export class ClearConnectService {
     return result;
   }
 
-  async getOrders(shiftStart: string, shiftEnd: string): Promise<ClearConnectOrder[]> {
-    const result = await this.makeRequest('getOrders', {
+  async getOrders(shiftStart: string, shiftEnd: string, regionIds?: string): Promise<ClearConnectOrder[]> {
+    const params: Record<string, string> = {
       shiftStart: `${shiftStart} 00:00:00`,
       shiftEnd: `${shiftEnd} 23:59:59`,
       status: 'filled'
-    });
+    };
+    
+    // Add region filter if provided
+    if (regionIds) {
+      params.tempRegionIdIn = regionIds;
+    }
+    
+    const result = await this.makeRequest('getOrders', params);
 
     console.log('getOrders result keys:', Object.keys(result || {}));
 
@@ -273,18 +280,37 @@ export class ClearConnectService {
   async calculateWeeklyHours(weekStart: string, weekEnd: string): Promise<DailyHoursByRecruiter> {
     const hoursByRecruiter: DailyHoursByRecruiter = {};
 
-    const allOrders = await this.getOrders(weekStart, weekEnd);
+    // Fetch day by day to avoid API pagination limits
+    const startDate = new Date(weekStart);
+    const endDate = new Date(weekEnd);
+    let allOrders: ClearConnectOrder[] = [];
+    
+    const currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      const dateStr = currentDate.toISOString().split('T')[0];
+      const nextDate = new Date(currentDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      const nextDateStr = nextDate.toISOString().split('T')[0];
+      
+      console.log(`Fetching orders for ${dateStr}...`);
+      const dayOrders = await this.getOrders(dateStr, dateStr);
+      
+      // Filter to only orders starting on this date
+      const filteredOrders = dayOrders.filter(order => {
+        const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
+        return orderDate === dateStr;
+      });
+      
+      allOrders = allOrders.concat(filteredOrders);
+      console.log(`Got ${filteredOrders.length} orders for ${dateStr}`);
+      
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
 
-    // Filter orders to only Nursing, Acute, or Temp to Perm regions
-    const filteredOrders = allOrders.filter(order => {
-      const regionName = (order.regionName || '').toLowerCase();
-      return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
-    });
-
-    console.log(`Found ${filteredOrders.length} filtered orders for week ${weekStart} to ${weekEnd} (from ${allOrders.length} total)`);
+    console.log(`Total orders for week ${weekStart} to ${weekEnd}: ${allOrders.length}`);
 
     // Get all unique temp IDs
-    const tempIds = [...new Set(filteredOrders.map(o => o.tempId).filter(id => id))];
+    const tempIds = [...new Set(allOrders.map(o => o.tempId).filter(id => id))];
     console.log(`Looking up ${tempIds.length} unique temps...`);
 
     // Batch fetch all temps at once
@@ -292,7 +318,7 @@ export class ClearConnectService {
     console.log(`Retrieved ${tempsMap.size} temps`);
 
     // Process orders using cached temp data
-    for (const order of filteredOrders) {
+    for (const order of allOrders) {
       try {
         const temp = tempsMap.get(order.tempId);
         if (!temp || !temp.staffingSpecialist) {

@@ -230,7 +230,7 @@ app.http('triggerCalculation', {
 });
 
 // Calculate weekly totals - this is the main calculation used for reports
-// It calculates total hours for the entire week (Sun-Sat) for this week and next week
+// It calculates total hours for the entire week (Sun-Sat) for last week, this week and next week
 // Only updates the current day's snapshot slot, preserving previous days
 app.http('calculateWeekly', {
   methods: ['GET', 'POST'],
@@ -265,7 +265,7 @@ app.http('calculateWeekly', {
       const nextWeekSaturday = new Date(nextWeekSunday);
       nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
       
-      // Last week: previous Sunday to Saturday (only update if we're on Sun/Mon)
+      // Last week: previous Sunday to Saturday
       const lastWeekSunday = new Date(thisWeekSunday);
       lastWeekSunday.setDate(thisWeekSunday.getDate() - 7);
       
@@ -273,6 +273,11 @@ app.http('calculateWeekly', {
       lastWeekSaturday.setDate(lastWeekSunday.getDate() + 6);
       
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
+      
+      // Get region IDs from database
+      const regionIds = await databaseService.getActiveRegionIds();
+      const regionIdString = regionIds.join(',');
+      context.log(`Using ${regionIds.length} region IDs from database`);
       
       context.log(`Calculating weekly hours...`);
       context.log(`Last week: ${formatDate(lastWeekSunday)} to ${formatDate(lastWeekSaturday)}`);
@@ -286,54 +291,58 @@ app.http('calculateWeekly', {
       context.log(`Found ${configuredUserIds.size} configured recruiters`);
       
       const results: any = {
-        lastWeek: { weekStart: formatDate(lastWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: false },
-        thisWeek: { weekStart: formatDate(thisWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: true },
-        nextWeek: { weekStart: formatDate(nextWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, filteredOrders: 0, updated: true }
+        lastWeek: { weekStart: formatDate(lastWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true },
+        thisWeek: { weekStart: formatDate(thisWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true },
+        nextWeek: { weekStart: formatDate(nextWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true }
       };
       const newRecruiters: any[] = [];
       
-      // Process this week and next week (always update current day slot)
-      // Only process last week on Sun/Mon (day 0) to capture final totals
-      const weeksToProcess: Array<[string, Date, Date, boolean]> = [
-        ['thisWeek', thisWeekSunday, thisWeekSaturday, true],
-        ['nextWeek', nextWeekSunday, nextWeekSaturday, true]
+      // Process all three weeks
+      const weeksToProcess: Array<[string, Date, Date]> = [
+        ['lastWeek', lastWeekSunday, lastWeekSaturday],
+        ['thisWeek', thisWeekSunday, thisWeekSaturday],
+        ['nextWeek', nextWeekSunday, nextWeekSaturday]
       ];
       
-      // On Sunday/Monday, also update last week's final snapshot
-      if (snapshotDayOfWeek === 0) {
-        weeksToProcess.unshift(['lastWeek', lastWeekSunday, lastWeekSaturday, true]);
-        results.lastWeek.updated = true;
-      }
-      
-      for (const [weekName, weekSunday, weekSaturday, shouldUpdate] of weeksToProcess) {
-        if (!shouldUpdate) continue;
-        
+      for (const [weekName, weekSunday, weekSaturday] of weeksToProcess) {
         const weekStart = formatDate(weekSunday as Date);
         const weekEnd = formatDate(weekSaturday as Date);
         
         context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
         
-        // Get all orders for the week
-        const allOrders = await clearConnectService.getOrders(weekStart, weekEnd);
+        // Fetch day by day to avoid API pagination limits (3000 record limit)
+        let allOrders: any[] = [];
+        const currentDate = new Date(weekSunday);
+        
+        while (currentDate <= weekSaturday) {
+          const dateStr = formatDate(currentDate);
+          context.log(`  Fetching ${dateStr}...`);
+          
+          const dayOrders = await clearConnectService.getOrders(dateStr, dateStr, regionIdString);
+          
+          // Filter to only orders starting on this date
+          const filteredOrders = dayOrders.filter(order => {
+            const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
+            return orderDate === dateStr;
+          });
+          
+          allOrders = allOrders.concat(filteredOrders);
+          context.log(`    Got ${filteredOrders.length} orders for ${dateStr}`);
+          
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+        
         results[weekName].totalOrders = allOrders.length;
-        
-        // Filter orders by region
-        const orders = allOrders.filter(order => {
-          const regionName = (order.regionName || '').toLowerCase();
-          return regionName.includes('nursing') || regionName.includes('acute') || regionName.includes('temp to perm');
-        });
-        results[weekName].filteredOrders = orders.length;
-        
-        context.log(`${weekName}: ${orders.length} filtered orders from ${allOrders.length} total`);
+        context.log(`${weekName}: ${allOrders.length} total orders`);
         
         // Get unique temps
-        const tempIds = [...new Set(orders.map(o => o.tempId).filter(id => id))];
+        const tempIds = [...new Set(allOrders.map(o => o.tempId).filter(id => id))];
         const tempsMap = await clearConnectService.getTempsBatch(tempIds);
         
         // Calculate hours by recruiter
         const hoursByRecruiter: Record<number, number> = {};
         
-        for (const order of orders) {
+        for (const order of allOrders) {
           const temp = tempsMap.get(order.tempId);
           if (!temp || !temp.staffingSpecialist) continue;
           
@@ -389,6 +398,7 @@ app.http('calculateWeekly', {
         }
         
         results[weekName].hours = hoursByRecruiter;
+        results[weekName].recruitersWithHours = Object.keys(hoursByRecruiter).length;
       }
       
       return { 
@@ -396,6 +406,7 @@ app.http('calculateWeekly', {
           calculatedAt: now.toISOString(),
           snapshotDayOfWeek,
           snapshotDayName: ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek],
+          regionIdsUsed: regionIds.length,
           newRecruitersAdded: newRecruiters,
           results
         } 
