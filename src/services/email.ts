@@ -121,12 +121,12 @@ class EmailService {
       <html>
       <head>
         <style>
-          body { font-family: Arial, sans-serif; }
-          table { border-collapse: collapse; margin-bottom: 20px; }
+          body { font-family: Arial, sans-serif; text-align: center; }
+          table { border-collapse: collapse; margin: 0 auto 20px auto; }
           th, td { border: 1px solid #ddd; padding: 8px; }
           th { background-color: #f2f2f2; }
-          h1 { color: #333; }
-          h2 { color: #666; margin-top: 30px; }
+          h1 { color: #333; text-align: center; }
+          h2 { color: #666; margin-top: 30px; text-align: center; }
         </style>
       </head>
       <body>
@@ -249,10 +249,29 @@ class EmailService {
       // Get "This Week" data for display
       const thisWeekData = weekMap.get('This Week') || [];
       
+      // Track division totals
+      let divTotalSunMon = 0;
+      let divTotalTue = 0;
+      let divTotalWed = 0;
+      let divTotalThu = 0;
+      let divTotalFri = 0;
+      let divTotalSat = 0;
+      let divTotalGoal = 0;
+      
       for (const [userId, { name, goal }] of sortedRecruiters) {
         const recruiterRow = thisWeekData.find(r => r.user_id === userId);
         
+        // Add to division totals
+        divTotalGoal += goal;
+        
         if (recruiterRow) {
+          divTotalSunMon += recruiterRow.sun_mon;
+          divTotalTue += recruiterRow.tue;
+          divTotalWed += recruiterRow.wed;
+          divTotalThu += recruiterRow.thu;
+          divTotalFri += recruiterRow.fri;
+          divTotalSat += recruiterRow.sat;
+          
           const weeklyTotal = recruiterRow.sun_mon + recruiterRow.tue + recruiterRow.wed + 
                             recruiterRow.thu + recruiterRow.fri + recruiterRow.sat;
           const goalMet = isGoalMet(weeklyTotal, goal);
@@ -284,6 +303,27 @@ class EmailService {
           `;
         }
       }
+      
+      // Add division total row
+      const divTotal = divTotalSunMon + divTotalTue + divTotalWed + divTotalThu + divTotalFri + divTotalSat;
+      const divGoalMet = isGoalMet(divTotal, divTotalGoal);
+      const totalRowStyle = 'border: 1px solid #ddd; padding: 8px; font-weight: bold;';
+      const totalCellStyle = divGoalMet 
+        ? 'border: 1px solid #ddd; padding: 8px; text-align: right; font-weight: bold; background-color: #90EE90;'
+        : 'border: 1px solid #ddd; padding: 8px; text-align: right; font-weight: bold;';
+      
+      html += `
+        <tr>
+          <td style="${totalRowStyle}">Total</td>
+          <td style="${totalCellStyle}">${divTotalSunMon.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalTue.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalWed.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalThu.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalFri.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalSat.toFixed(2)}</td>
+          <td style="${totalCellStyle}">${divTotalGoal.toFixed(0)}</td>
+        </tr>
+      `;
 
       html += '</table>';
     }
