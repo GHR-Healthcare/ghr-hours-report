@@ -226,8 +226,8 @@ app.timer('mondayWeeklyRecap', {
     context.log('=== MONDAY WEEKLY RECAP TRIGGERED (8:00 AM EST) ===');
     
     try {
-      // First recalculate to ensure we have latest data
-      await calculateWeeklyHours(context);
+      // No recalculation needed - use the snapshots saved throughout last week
+      // Saturday's nightly snapshot already captured the final totals
       
       // Send the weekly recap email
       await sendReportEmail(context, 'Weekly Hours Recap - Previous Week Final');

@@ -937,7 +937,7 @@ app.http('adminPortal', {
         const res = await fetch(API_BASE + '/send-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ includeLastWeek: isMonday, emailType: type })
+          body: JSON.stringify({ includeLastWeek: true, emailType: type })
         });
         
         const data = await res.json();
@@ -971,7 +971,7 @@ app.http('adminPortal', {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recipient: recipient,
-            includeLastWeek: selectedEmailType === 'monday'
+            includeLastWeek: true
           })
         });
         
