@@ -341,6 +341,54 @@ class DatabaseService {
 
     return totals;
   }
+
+  // Get hours directly from ghr_ctmsync orders table
+  // This bypasses the ClearConnect API and queries the source data directly
+  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<Map<number, number>> {
+    const pool = await this.getPool();
+    
+    const result = await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .input('weekEnd', sql.Date, weekEnd)
+      .query(`
+        SELECT 
+          u.userid,
+          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
+        FROM ghr_ctmsync.dbo.orders o
+        INNER JOIN ghr_ctmsync.dbo.profile_temp pt ON o.filledby = pt.recordid
+        INNER JOIN ghr_ctmsync.dbo.users u ON pt.staffingspecialist = u.userid
+        WHERE o.status = 'filled'
+          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        GROUP BY u.userid
+      `);
+    
+    const hoursMap = new Map<number, number>();
+    for (const row of result.recordset) {
+      hoursMap.set(row.userid, row.total_hours || 0);
+    }
+    
+    return hoursMap;
+  }
+
+  // Get user name from ctmsync users table
+  async getUserNameFromCtmsync(userId: number): Promise<string | null> {
+    const pool = await this.getPool();
+    
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT firstname, lastname 
+        FROM ghr_ctmsync.dbo.users 
+        WHERE userid = @userId
+      `);
+    
+    if (result.recordset.length > 0) {
+      const row = result.recordset[0];
+      return `${row.firstname} ${row.lastname}`.trim();
+    }
+    
+    return null;
+  }
 }
 
 export const databaseService = new DatabaseService();

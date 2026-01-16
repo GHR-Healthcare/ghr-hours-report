@@ -232,6 +232,7 @@ app.http('triggerCalculation', {
 // Calculate weekly totals - this is the main calculation used for reports
 // It calculates total hours for the entire week (Sun-Sat) for last week, this week and next week
 // Only updates the current day's snapshot slot, preserving previous days
+// Now queries orders table directly instead of using ClearConnect API
 app.http('calculateWeekly', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
@@ -274,11 +275,6 @@ app.http('calculateWeekly', {
       
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
       
-      // Get region IDs from database
-      const regionIds = await databaseService.getActiveRegionIds();
-      const regionIdString = regionIds.join(',');
-      context.log(`Using ${regionIds.length} region IDs from database`);
-      
       context.log(`Calculating weekly hours...`);
       context.log(`Last week: ${formatDate(lastWeekSunday)} to ${formatDate(lastWeekSaturday)}`);
       context.log(`This week: ${formatDate(thisWeekSunday)} to ${formatDate(thisWeekSaturday)}`);
@@ -292,9 +288,9 @@ app.http('calculateWeekly', {
       context.log(`Found ${activeUserIds.size} active recruiters`);
       
       const results: any = {
-        lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
-        thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
-        nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] }
+        lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalHours: 0, recruiters: [] as any[] },
+        thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalHours: 0, recruiters: [] as any[] },
+        nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalHours: 0, recruiters: [] as any[] }
       };
       const newRecruiters: any[] = [];
       
@@ -311,112 +307,64 @@ app.http('calculateWeekly', {
         
         context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
         
-        // Fetch day by day to avoid API pagination limits (3000 record limit)
-        let allOrders: any[] = [];
-        const currentDate = new Date(weekSunday);
+        // Query orders directly from database - much faster and more accurate
+        const hoursByRecruiter = await databaseService.getHoursFromOrders(weekStart, weekEnd);
         
-        while (currentDate <= weekSaturday) {
-          const dateStr = formatDate(currentDate);
-          context.log(`  Fetching ${dateStr}...`);
-          
-          const dayOrders = await clearConnectService.getOrders(dateStr, dateStr, regionIdString);
-          
-          // Filter to only orders starting on this date
-          const filteredOrders = dayOrders.filter(order => {
-            const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
-            return orderDate === dateStr;
-          });
-          
-          allOrders = allOrders.concat(filteredOrders);
-          context.log(`    Got ${filteredOrders.length} orders for ${dateStr}`);
-          
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
+        context.log(`${weekName}: Found hours for ${hoursByRecruiter.size} staffers`);
         
-        results[weekName].totalOrders = allOrders.length;
-        context.log(`${weekName}: ${allOrders.length} total orders`);
-        
-        // Get unique temps
-        const tempIds = [...new Set(allOrders.map(o => o.tempId).filter(id => id))];
-        const tempsMap = await clearConnectService.getTempsBatch(tempIds);
-        
-        // Calculate hours by recruiter (only for active recruiters)
-        const hoursByRecruiter: Record<number, number> = {};
-        
-        for (const order of allOrders) {
-          const temp = tempsMap.get(order.tempId);
-          if (!temp || !temp.staffingSpecialist) continue;
-          
-          const recruiterId = parseInt(temp.staffingSpecialist, 10);
-          
-          // Check if this is a new recruiter we haven't seen before
-          if (!activeUserIds.has(recruiterId)) {
+        // Check for new recruiters and auto-add them
+        for (const [userId, hours] of hoursByRecruiter) {
+          if (!activeUserIds.has(userId)) {
             // Check if recruiter exists at all (including deleted/inactive)
-            const exists = await databaseService.recruiterExists(recruiterId);
+            const exists = await databaseService.recruiterExists(userId);
             if (!exists) {
               // Auto-add new recruiter - they'll be active by default
               try {
-                const user = await clearConnectService.getUser(temp.staffingSpecialist);
-                const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+                const userName = await databaseService.getUserNameFromCtmsync(userId);
+                const name = userName || `User ${userId}`;
                 
                 await databaseService.createRecruiter({
-                  user_id: recruiterId,
-                  user_name: userName,
+                  user_id: userId,
+                  user_name: name,
                   division_id: 1,
                   weekly_goal: 0,
                   display_order: 99
                 });
                 
                 // Add to active set so their hours get counted
-                activeUserIds.add(recruiterId);
-                recruiterNames.set(recruiterId, userName);
-                newRecruiters.push({ userId: recruiterId, name: userName });
-                context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+                activeUserIds.add(userId);
+                recruiterNames.set(userId, name);
+                newRecruiters.push({ userId, name });
+                context.log(`Auto-added recruiter: ${name} (ID: ${userId})`);
               } catch (addError) {
-                context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+                context.log(`Error adding recruiter ${userId}: ${addError}`);
               }
             }
-            // If recruiter exists but is deleted/inactive, skip their hours
-            if (!activeUserIds.has(recruiterId)) {
-              continue;
-            }
           }
-          
-          const startTime = new Date(order.shiftStartTime);
-          const endTime = new Date(order.shiftEndTime);
-          
-          // Give credit for full shift time (no lunch deduction)
-          const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-          const hours = totalMinutes / 60;
-          
-          if (!hoursByRecruiter[recruiterId]) {
-            hoursByRecruiter[recruiterId] = 0;
-          }
-          hoursByRecruiter[recruiterId] += hours;
         }
         
-        // Round and save snapshots - ONLY for current day slot
+        // Round and save snapshots - ONLY for active recruiters
         let totalHoursForWeek = 0;
         const recruiterDetails: any[] = [];
         
-        for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
-          const roundedHours = Math.round(hours * 100) / 100;
-          hoursByRecruiter[parseInt(userIdStr)] = roundedHours;
-          totalHoursForWeek += roundedHours;
-          
-          const userId = parseInt(userIdStr);
-          recruiterDetails.push({
-            userId,
-            name: recruiterNames.get(userId) || `User ${userId}`,
-            hours: roundedHours
-          });
-          
-          await databaseService.upsertWeeklySnapshot(
-            userId, 
-            weekStart, 
-            snapshotDayOfWeek, 
-            roundedHours
-          );
+        for (const [userId, hours] of hoursByRecruiter) {
+          if (activeUserIds.has(userId)) {
+            const roundedHours = Math.round(hours * 100) / 100;
+            totalHoursForWeek += roundedHours;
+            
+            recruiterDetails.push({
+              userId,
+              name: recruiterNames.get(userId) || `User ${userId}`,
+              hours: roundedHours
+            });
+            
+            await databaseService.upsertWeeklySnapshot(
+              userId, 
+              weekStart, 
+              snapshotDayOfWeek, 
+              roundedHours
+            );
+          }
         }
         
         // Sort by hours descending
@@ -431,7 +379,6 @@ app.http('calculateWeekly', {
           calculatedAt: now.toISOString(),
           snapshotDayOfWeek,
           snapshotDayName: ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek],
-          regionIdsUsed: regionIds.length,
           newRecruitersAdded: newRecruiters,
           results
         } 

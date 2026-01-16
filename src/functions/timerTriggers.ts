@@ -1,7 +1,6 @@
 import { app, InvocationContext, Timer } from '@azure/functions';
 import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
-import { clearConnectService } from '../services/clearconnect';
 
 // Helper function to get week boundaries
 function getWeekInfo(forDate?: Date) {
@@ -51,16 +50,12 @@ function formatDate(d: Date): string {
 
 // Calculate weekly hours for all weeks and save snapshots
 // Only updates the current day's slot, preserving previous days' snapshots
+// Now queries orders table directly instead of using ClearConnect API
 async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOverride?: number): Promise<void> {
   const weekInfo = getWeekInfo();
   const snapshotSlot = snapshotSlotOverride !== undefined ? snapshotSlotOverride : weekInfo.snapshotDayOfWeek;
   
   context.log(`Calculating weekly hours, snapshot slot: ${snapshotSlot} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotSlot]})`);
-  
-  // Get region IDs from database
-  const regionIds = await databaseService.getActiveRegionIds();
-  const regionIdString = regionIds.join(',');
-  context.log(`Using ${regionIds.length} region IDs from database`);
   
   // Get active, non-deleted recruiters only
   const activeRecruiters = await databaseService.getRecruiters(false);
@@ -81,96 +76,50 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     
     context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
     
-    // Fetch day by day to avoid API pagination limits (3000 record limit)
-    let allOrders: any[] = [];
-    const currentDate = new Date(weekData.sunday);
+    // Query orders directly from database - much faster and more accurate
+    const hoursByRecruiter = await databaseService.getHoursFromOrders(weekStart, weekEnd);
     
-    while (currentDate <= weekData.saturday) {
-      const dateStr = formatDate(currentDate);
-      context.log(`  Fetching ${dateStr}...`);
-      
-      const dayOrders = await clearConnectService.getOrders(dateStr, dateStr, regionIdString);
-      
-      // Filter to only orders starting on this date
-      const filteredOrders = dayOrders.filter((order: any) => {
-        const orderDate = order.shiftStartTime.split('T')[0].split(' ')[0];
-        return orderDate === dateStr;
-      });
-      
-      allOrders = allOrders.concat(filteredOrders);
-      context.log(`    Got ${filteredOrders.length} orders for ${dateStr}`);
-      
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
+    context.log(`${weekName}: Found hours for ${hoursByRecruiter.size} staffers`);
     
-    context.log(`${weekName}: ${allOrders.length} total orders`);
-    
-    // Get unique temps
-    const tempIds = [...new Set(allOrders.map((o: any) => o.tempId).filter((id: any) => id))];
-    const tempsMap = await clearConnectService.getTempsBatch(tempIds as string[]);
-    
-    // Calculate hours by recruiter (only for active recruiters)
-    const hoursByRecruiter: Record<number, number> = {};
-    
-    for (const order of allOrders) {
-      const temp = tempsMap.get(order.tempId);
-      if (!temp || !temp.staffingSpecialist) continue;
-      
-      const recruiterId = parseInt(temp.staffingSpecialist, 10);
-      
-      // Check if this is a new recruiter we haven't seen before
-      if (!activeUserIds.has(recruiterId)) {
+    // Check for new recruiters and auto-add them
+    for (const [userId, hours] of hoursByRecruiter) {
+      if (!activeUserIds.has(userId)) {
         // Check if recruiter exists at all (including deleted/inactive)
-        const exists = await databaseService.recruiterExists(recruiterId);
+        const exists = await databaseService.recruiterExists(userId);
         if (!exists) {
           // Auto-add new recruiter - they'll be active by default
           try {
-            const user = await clearConnectService.getUser(temp.staffingSpecialist);
-            const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
+            const userName = await databaseService.getUserNameFromCtmsync(userId);
             
             await databaseService.createRecruiter({
-              user_id: recruiterId,
-              user_name: userName,
+              user_id: userId,
+              user_name: userName || `User ${userId}`,
               division_id: 1,
               weekly_goal: 0,
               display_order: 99
             });
             
             // Add to active set so their hours get counted
-            activeUserIds.add(recruiterId);
-            context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
+            activeUserIds.add(userId);
+            context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
           } catch (addError) {
-            context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
+            context.log(`Error adding recruiter ${userId}: ${addError}`);
           }
         }
-        // If recruiter exists but is deleted/inactive, skip their hours
-        if (!activeUserIds.has(recruiterId)) {
-          continue;
-        }
       }
-      
-      const startTime = new Date(order.shiftStartTime);
-      const endTime = new Date(order.shiftEndTime);
-      
-      // Give credit for full shift time (no lunch deduction)
-      const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
-      const hours = totalMinutes / 60;
-      
-      if (!hoursByRecruiter[recruiterId]) {
-        hoursByRecruiter[recruiterId] = 0;
-      }
-      hoursByRecruiter[recruiterId] += hours;
     }
     
-    // Save snapshots - only updates the specified slot, previous days are preserved
-    for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
-      const roundedHours = Math.round(hours * 100) / 100;
-      await databaseService.upsertWeeklySnapshot(
-        parseInt(userIdStr),
-        weekStart,
-        snapshotSlot,
-        roundedHours
-      );
+    // Save snapshots - only for active recruiters
+    for (const [userId, hours] of hoursByRecruiter) {
+      if (activeUserIds.has(userId)) {
+        const roundedHours = Math.round(hours * 100) / 100;
+        await databaseService.upsertWeeklySnapshot(
+          userId,
+          weekStart,
+          snapshotSlot,
+          roundedHours
+        );
+      }
     }
   }
 }
