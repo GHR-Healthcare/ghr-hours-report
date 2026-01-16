@@ -285,15 +285,16 @@ app.http('calculateWeekly', {
       context.log(`Next week: ${formatDate(nextWeekSunday)} to ${formatDate(nextWeekSaturday)}`);
       context.log(`Snapshot day of week: ${snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek]})`);
       
-      // Get configured recruiters
+      // Get configured recruiters with names for display
       const configuredRecruiters = await databaseService.getRecruiters(true);
       const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
+      const recruiterNames = new Map(configuredRecruiters.map(r => [r.user_id, r.user_name]));
       context.log(`Found ${configuredUserIds.size} configured recruiters`);
       
       const results: any = {
-        lastWeek: { weekStart: formatDate(lastWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true },
-        thisWeek: { weekStart: formatDate(thisWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true },
-        nextWeek: { weekStart: formatDate(nextWeekSunday), hours: {} as Record<number, number>, totalOrders: 0, updated: true }
+        lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
+        thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
+        nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] }
       };
       const newRecruiters: any[] = [];
       
@@ -389,19 +390,34 @@ app.http('calculateWeekly', {
         }
         
         // Round and save snapshots - ONLY for current day slot
+        let totalHoursForWeek = 0;
+        const recruiterDetails: any[] = [];
+        
         for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
           const roundedHours = Math.round(hours * 100) / 100;
           hoursByRecruiter[parseInt(userIdStr)] = roundedHours;
+          totalHoursForWeek += roundedHours;
+          
+          const userId = parseInt(userIdStr);
+          recruiterDetails.push({
+            userId,
+            name: recruiterNames.get(userId) || `User ${userId}`,
+            hours: roundedHours
+          });
+          
           await databaseService.upsertWeeklySnapshot(
-            parseInt(userIdStr), 
+            userId, 
             weekStart, 
             snapshotDayOfWeek, 
             roundedHours
           );
         }
         
-        results[weekName].hours = hoursByRecruiter;
-        results[weekName].recruitersWithHours = Object.keys(hoursByRecruiter).length;
+        // Sort by hours descending
+        recruiterDetails.sort((a, b) => b.hours - a.hours);
+        
+        results[weekName].totalHours = Math.round(totalHoursForWeek * 100) / 100;
+        results[weekName].recruiters = recruiterDetails;
       }
       
       return { 
@@ -922,20 +938,36 @@ app.http('adminPortal', {
         if (res.ok) {
           let html = '<h3>Results</h3>';
           html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
-          html += '<p>Snapshot day of week: ' + ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][data.snapshotDayOfWeek] + '</p>';
+          html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
+          html += '<p>Region IDs used: ' + data.regionIdsUsed + '</p>';
           
           if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
-            html += '<p><strong>New recruiters added:</strong> ' + 
+            html += '<p style="color: #4CAF50;"><strong>New recruiters added:</strong> ' + 
               data.newRecruitersAdded.map(r => r.name).join(', ') + '</p>';
           }
           
-          html += '<table><thead><tr><th>Week</th><th>Total Orders</th><th>Filtered</th><th>Recruiters</th></tr></thead><tbody>';
+          // Summary table
+          html += '<h4 style="margin-top: 20px;">Weekly Summary</h4>';
+          html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Recruiters</th><th>Total Hours</th></tr></thead><tbody>';
           for (const [weekName, weekData] of Object.entries(data.results)) {
             const week = weekData;
-            html += '<tr><td>' + weekName + ' (' + week.weekStart + ')</td><td>' + week.totalOrders + '</td><td>' + 
-              week.filteredOrders + '</td><td>' + Object.keys(week.hours).length + '</td></tr>';
+            html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' + 
+              week.totalOrders + '</td><td>' + week.recruiters.length + '</td><td><strong>' + week.totalHours.toLocaleString() + '</strong></td></tr>';
           }
           html += '</tbody></table>';
+          
+          // Detailed breakdown per week
+          for (const [weekName, weekData] of Object.entries(data.results)) {
+            const week = weekData;
+            if (week.recruiters && week.recruiters.length > 0) {
+              html += '<h4 style="margin-top: 20px;">' + weekName + ' - Hours by Recruiter</h4>';
+              html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th></tr></thead><tbody>';
+              for (const r of week.recruiters) {
+                html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() + '</td></tr>';
+              }
+              html += '</tbody></table>';
+            }
+          }
           
           results.innerHTML = html;
           showAlert('Calculation complete!');
