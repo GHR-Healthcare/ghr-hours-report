@@ -473,24 +473,44 @@ app.http('calculateRange', {
 });
 
 app.http('triggerEmail', {
-  methods: ['POST'],
+  methods: ['POST', 'GET'],
   authLevel: 'anonymous',
   route: 'send-email',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
-      const body = await request.json() as any;
-      const includeLastWeek = body.includeLastWeek === true;
+      let includeLastWeek = true; // Default to including last week
+      let emailType = 'daily';
+      
+      try {
+        const body = await request.json() as any;
+        if (body) {
+          if (body.includeLastWeek !== undefined) {
+            includeLastWeek = body.includeLastWeek === true;
+          }
+          if (body.emailType) {
+            emailType = body.emailType;
+          }
+        }
+      } catch {
+        // No body or invalid JSON - use defaults
+      }
       
       const reportData = await databaseService.getReportData();
       const weeklyTotals = await databaseService.getWeeklyTotals();
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
       
       const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
-      const subject = includeLastWeek ? 'Daily Hours - Last Week' : 'Daily Hours';
+      
+      let subject: string;
+      if (emailType === 'monday') {
+        subject = 'Weekly Hours Recap - Previous Week Final';
+      } else {
+        subject = 'Daily Hours Report';
+      }
       
       await emailService.sendEmail(recipients, subject, html);
       
-      return { jsonBody: { success: true, recipients: recipients.length } };
+      return { jsonBody: { success: true, recipients: recipients.length, emailType, subject } };
     } catch (error) {
       context.error('Error sending email:', error);
       return { status: 500, jsonBody: { error: 'Failed to send email' } };
@@ -643,7 +663,20 @@ app.http('adminPortal', {
 
     <!-- Email Panel -->
     <div class="panel" id="email-panel">
-      <h2>Send Test Email</h2>
+      <h2>Send Email Report</h2>
+      
+      <div style="margin-bottom: 2rem; padding: 1rem; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
+        <h3 style="margin: 0 0 1rem 0; color: #0369a1;">Send to All Recipients</h3>
+        <p style="color: #6b7280; margin-bottom: 1rem;">Send the report to all configured recipients (same as scheduled emails).</p>
+        <div style="display: flex; gap: 1rem;">
+          <button class="btn btn-primary" onclick="sendLiveEmail('daily')">📊 Send Daily Report</button>
+          <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">📅 Send Monday Recap</button>
+        </div>
+      </div>
+      
+      <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e5e7eb;">
+      
+      <h3>Send Test Email</h3>
       <p style="color: #6b7280; margin-bottom: 1.5rem;">Send a test email to yourself before sending to the whole team.</p>
       
       <div class="form-group">
@@ -662,7 +695,7 @@ app.http('adminPortal', {
         </div>
       </div>
       
-      <button class="btn btn-primary" onclick="sendTestEmail()" id="send-test-btn">Send Test Email</button>
+      <button class="btn btn-secondary" onclick="sendTestEmail()" id="send-test-btn">Send Test Email</button>
     </div>
 
     <!-- Preview Panel -->
@@ -885,6 +918,40 @@ app.http('adminPortal', {
       document.querySelectorAll('.email-option').forEach(el => {
         el.classList.toggle('selected', el.dataset.type === type);
       });
+    }
+
+    async function sendLiveEmail(type) {
+      const isMonday = type === 'monday';
+      const confirmMsg = isMonday 
+        ? 'Send the Monday Recap email to ALL configured recipients?' 
+        : 'Send the Daily Report email to ALL configured recipients?';
+      
+      if (!confirm(confirmMsg)) return;
+      
+      const btn = event.target;
+      const originalText = btn.textContent;
+      btn.textContent = 'Sending...';
+      btn.disabled = true;
+      
+      try {
+        const res = await fetch(API_BASE + '/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ includeLastWeek: isMonday, emailType: type })
+        });
+        
+        const data = await res.json();
+        if (res.ok) {
+          showAlert('Email sent to ' + data.recipients + ' recipients!');
+        } else {
+          showAlert('Error: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showAlert('Error sending email: ' + err.message, 'error');
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
     }
 
     async function sendTestEmail() {
