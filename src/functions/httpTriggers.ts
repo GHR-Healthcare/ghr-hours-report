@@ -953,7 +953,10 @@ app.http('adminPortal', {
       let html = '<h3>Results</h3>';
       html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
       html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
-      html += '<p>Region IDs used: ' + data.regionIdsUsed + '</p>';
+      
+      if (data.regionsWithFilledOrders && data.regionsWithFilledOrders.length > 0) {
+        html += '<p><strong>Regions with filled orders:</strong> ' + data.regionsWithFilledOrders.join(', ') + '</p>';
+      }
       
       if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
         html += '<p style="color: #4CAF50;"><strong>New recruiters added:</strong> ' + 
