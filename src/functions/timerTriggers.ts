@@ -3,9 +3,9 @@ import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
 import { clearConnectService } from '../services/clearconnect';
 
-// Helper function to get week boundaries and day of week
-function getWeekInfo() {
-  const now = new Date();
+// Helper function to get week boundaries
+function getWeekInfo(forDate?: Date) {
+  const now = forDate || new Date();
   const currentDayOfWeek = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, etc.
   
   // Snapshot slot: 0=Sun/Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat
@@ -37,6 +37,7 @@ function getWeekInfo() {
   lastWeekSaturday.setDate(lastWeekSunday.getDate() + 6);
   
   return {
+    currentDayOfWeek,
     snapshotDayOfWeek,
     lastWeek: { sunday: lastWeekSunday, saturday: lastWeekSaturday },
     thisWeek: { sunday: thisWeekSunday, saturday: thisWeekSaturday },
@@ -50,10 +51,11 @@ function formatDate(d: Date): string {
 
 // Calculate weekly hours for all weeks and save snapshots
 // Only updates the current day's slot, preserving previous days' snapshots
-async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
+async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOverride?: number): Promise<void> {
   const weekInfo = getWeekInfo();
+  const snapshotSlot = snapshotSlotOverride !== undefined ? snapshotSlotOverride : weekInfo.snapshotDayOfWeek;
   
-  context.log(`Calculating weekly hours, snapshot day: ${weekInfo.snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][weekInfo.snapshotDayOfWeek]})`);
+  context.log(`Calculating weekly hours, snapshot slot: ${snapshotSlot} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotSlot]})`);
   
   // Get region IDs from database
   const regionIds = await databaseService.getActiveRegionIds();
@@ -154,95 +156,149 @@ async function calculateWeeklyHours(context: InvocationContext): Promise<void> {
       hoursByRecruiter[recruiterId] += hours;
     }
     
-    // Save snapshots - only updates current day slot, previous days are preserved
+    // Save snapshots - only updates the specified slot, previous days are preserved
     for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
       const roundedHours = Math.round(hours * 100) / 100;
       await databaseService.upsertWeeklySnapshot(
         parseInt(userIdStr),
         weekStart,
-        weekInfo.snapshotDayOfWeek,
+        snapshotSlot,
         roundedHours
       );
     }
   }
 }
 
-// Calculate hours and send email
-// isLastWeekRecap: if true, this is the Monday morning "last week final" email
-async function runReportAndEmail(context: InvocationContext, isLastWeekRecap: boolean = false): Promise<void> {
-  try {
-    // First, calculate weekly hours from ClearConnect
-    context.log('Calculating weekly hours from ClearConnect...');
-    await calculateWeeklyHours(context);
-    context.log('Calculation complete');
+// Send email report
+async function sendReportEmail(context: InvocationContext, subject: string): Promise<void> {
+  // Get report data and generate HTML - always includes all 3 weeks
+  const reportData = await databaseService.getReportData();
+  const weeklyTotals = await databaseService.getWeeklyTotals();
+  const html = emailService.generateReportHtml(reportData, weeklyTotals, true);
 
-    // Get report data and generate HTML
-    // Daily emails always include all 3 weeks (last, this, next)
-    const reportData = await databaseService.getReportData();
-    const weeklyTotals = await databaseService.getWeeklyTotals();
-    const html = emailService.generateReportHtml(reportData, weeklyTotals, true); // Always include last week
-
-    // Send email
-    const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
-    
-    if (recipients.length === 0) {
-      context.warn('No email recipients configured. Set EMAIL_RECIPIENTS environment variable.');
-      return;
-    }
-
-    const subject = isLastWeekRecap ? 'Weekly Hours - Last Week Final Recap' : 'Daily Hours';
-    await emailService.sendEmail(recipients, subject, html);
-    
-    context.log(`Email sent to ${recipients.length} recipients`);
-  } catch (error) {
-    context.error('Error in report and email:', error);
-    throw error;
+  // Send email
+  const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+  
+  if (recipients.length === 0) {
+    context.warn('No email recipients configured. Set EMAIL_RECIPIENTS environment variable.');
+    return;
   }
+
+  await emailService.sendEmail(recipients, subject, html);
+  context.log(`Email sent to ${recipients.length} recipients: ${subject}`);
 }
 
-// Monday-Friday 8:00 AM EST (13:00 UTC)
-app.timer('dailyReport8am', {
-  schedule: '0 0 13 * * 1-5',
+// =============================================================================
+// NIGHTLY SNAPSHOT - 11:59 PM EST (04:59 UTC next day)
+// Captures the final hours for the current day's slot every night
+// This ensures each day's column in the report has a final snapshot
+// =============================================================================
+app.timer('nightlySnapshot', {
+  schedule: '0 59 4 * * *', // 11:59 PM EST = 4:59 AM UTC next day
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('8 AM daily report triggered');
+    context.log('=== NIGHTLY SNAPSHOT TRIGGERED (11:59 PM EST) ===');
     
-    // Check if Monday - send last week recap first
-    const today = new Date();
-    const isMonday = today.getDay() === 1;
-    
-    if (isMonday) {
-      context.log('Monday detected - sending last week final recap');
-      await runReportAndEmail(context, true); // Last week recap email
+    try {
+      // Calculate and save snapshot for today's slot
+      await calculateWeeklyHours(context);
+      context.log('Nightly snapshot complete');
+    } catch (error) {
+      context.error('Error in nightly snapshot:', error);
+      throw error;
     }
+  }
+});
+
+// =============================================================================
+// MONDAY 8 AM - Weekly Recap Email
+// Sends a complete recap of last week with all daily snapshots filled in
+// The Saturday night snapshot should have run, so last week is complete
+// =============================================================================
+app.timer('mondayWeeklyRecap', {
+  schedule: '0 0 13 * * 1', // 8:00 AM EST Monday = 13:00 UTC
+  handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
+    context.log('=== MONDAY WEEKLY RECAP TRIGGERED (8:00 AM EST) ===');
     
-    // Always send the regular daily report
-    await runReportAndEmail(context, false);
+    try {
+      // First recalculate to ensure we have latest data
+      await calculateWeeklyHours(context);
+      
+      // Send the weekly recap email
+      await sendReportEmail(context, 'Weekly Hours Recap - Previous Week Final');
+      
+      context.log('Monday weekly recap complete');
+    } catch (error) {
+      context.error('Error in Monday weekly recap:', error);
+      throw error;
+    }
   }
 });
 
-// Monday-Friday 12:00 PM EST (17:00 UTC)
+// =============================================================================
+// DAILY EMAILS - Monday through Friday at 8 AM, 12 PM, and 5 PM EST
+// Regular progress updates showing all 3 weeks (last, this, next)
+// =============================================================================
+
+// 8:00 AM EST (13:00 UTC) - Tue-Fri only (Monday has separate recap)
+app.timer('dailyReport8am', {
+  schedule: '0 0 13 * * 2-5', // 8:00 AM EST Tue-Fri
+  handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
+    context.log('=== 8 AM DAILY REPORT TRIGGERED ===');
+    
+    try {
+      await calculateWeeklyHours(context);
+      await sendReportEmail(context, 'Daily Hours Report - Morning Update');
+      context.log('8 AM daily report complete');
+    } catch (error) {
+      context.error('Error in 8 AM daily report:', error);
+      throw error;
+    }
+  }
+});
+
+// 12:00 PM EST (17:00 UTC) - Mon-Fri
 app.timer('dailyReport12pm', {
-  schedule: '0 0 17 * * 1-5',
+  schedule: '0 0 17 * * 1-5', // 12:00 PM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('12 PM daily report triggered');
-    await runReportAndEmail(context, false);
+    context.log('=== 12 PM DAILY REPORT TRIGGERED ===');
+    
+    try {
+      await calculateWeeklyHours(context);
+      await sendReportEmail(context, 'Daily Hours Report - Midday Update');
+      context.log('12 PM daily report complete');
+    } catch (error) {
+      context.error('Error in 12 PM daily report:', error);
+      throw error;
+    }
   }
 });
 
-// Monday-Friday 5:00 PM EST (22:00 UTC)
+// 5:00 PM EST (22:00 UTC) - Mon-Fri
 app.timer('dailyReport5pm', {
-  schedule: '0 0 22 * * 1-5',
+  schedule: '0 0 22 * * 1-5', // 5:00 PM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('5 PM daily report triggered');
-    await runReportAndEmail(context, false);
+    context.log('=== 5 PM DAILY REPORT TRIGGERED ===');
+    
+    try {
+      await calculateWeeklyHours(context);
+      await sendReportEmail(context, 'Daily Hours Report - End of Day Update');
+      context.log('5 PM daily report complete');
+    } catch (error) {
+      context.error('Error in 5 PM daily report:', error);
+      throw error;
+    }
   }
 });
 
-// Nightly cleanup - 2:00 AM EST (07:00 UTC)
+// =============================================================================
+// NIGHTLY CLEANUP - 2:00 AM EST (07:00 UTC)
+// Removes old snapshot data to keep database clean
+// =============================================================================
 app.timer('nightlyCleanup', {
-  schedule: '0 0 7 * * *',
+  schedule: '0 0 7 * * *', // 2:00 AM EST = 7:00 AM UTC
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('Nightly cleanup triggered');
+    context.log('=== NIGHTLY CLEANUP TRIGGERED (2:00 AM EST) ===');
+    
     try {
       const deleted = await databaseService.cleanupOldSnapshots();
       context.log(`Cleanup complete: ${deleted} old snapshots removed`);

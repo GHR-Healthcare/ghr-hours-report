@@ -664,8 +664,7 @@ app.http('adminPortal', {
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h2>Report Preview</h2>
         <div>
-          <button class="btn btn-secondary" onclick="loadPreview(false)">Daily View</button>
-          <button class="btn btn-secondary" onclick="loadPreview(true)">Monday View</button>
+          <button class="btn btn-secondary" onclick="loadPreview(true)">Preview Report</button>
         </div>
       </div>
       <iframe id="preview-frame" class="preview-frame"></iframe>
@@ -741,7 +740,7 @@ app.http('adminPortal', {
         document.getElementById(tab.dataset.tab + '-panel').classList.add('active');
         
         if (tab.dataset.tab === 'preview') {
-          loadPreview(false);
+          loadPreview(true);
         }
       });
     });
@@ -923,6 +922,60 @@ app.http('adminPortal', {
       frame.src = API_BASE + '/report/html?includeLastWeek=' + includeLastWeek;
     }
 
+    // Render calculation results HTML
+    function renderCalculationResults(data) {
+      let html = '<h3>Results</h3>';
+      html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
+      html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
+      html += '<p>Region IDs used: ' + data.regionIdsUsed + '</p>';
+      
+      if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
+        html += '<p style="color: #4CAF50;"><strong>New recruiters added:</strong> ' + 
+          data.newRecruitersAdded.map(r => r.name).join(', ') + '</p>';
+      }
+      
+      // Summary table
+      html += '<h4 style="margin-top: 20px;">Weekly Summary</h4>';
+      html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Recruiters</th><th>Total Hours</th></tr></thead><tbody>';
+      for (const [weekName, weekData] of Object.entries(data.results)) {
+        const week = weekData;
+        html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' + 
+          week.totalOrders + '</td><td>' + week.recruiters.length + '</td><td><strong>' + week.totalHours.toLocaleString() + '</strong></td></tr>';
+      }
+      html += '</tbody></table>';
+      
+      // Detailed breakdown per week
+      for (const [weekName, weekData] of Object.entries(data.results)) {
+        const week = weekData;
+        if (week.recruiters && week.recruiters.length > 0) {
+          html += '<h4 style="margin-top: 20px;">' + weekName + ' - Hours by Recruiter</h4>';
+          html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th></tr></thead><tbody>';
+          for (const r of week.recruiters) {
+            html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() + '</td></tr>';
+          }
+          html += '</tbody></table>';
+        }
+      }
+      
+      return html;
+    }
+
+    // Load last calculation from localStorage
+    function loadLastCalculation() {
+      const results = document.getElementById('calc-results');
+      const saved = localStorage.getItem('ghr-last-calculation');
+      if (saved) {
+        try {
+          const data = JSON.parse(saved);
+          results.innerHTML = renderCalculationResults(data);
+        } catch (e) {
+          results.innerHTML = '<p>No previous calculation results.</p>';
+        }
+      } else {
+        results.innerHTML = '<p>No previous calculation results. Click "Run Weekly Calculation" to fetch data from ClearConnect.</p>';
+      }
+    }
+
     // Calculation
     async function runCalculation() {
       const btn = document.getElementById('calc-btn');
@@ -936,40 +989,10 @@ app.http('adminPortal', {
         const data = await res.json();
         
         if (res.ok) {
-          let html = '<h3>Results</h3>';
-          html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
-          html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
-          html += '<p>Region IDs used: ' + data.regionIdsUsed + '</p>';
+          // Save to localStorage
+          localStorage.setItem('ghr-last-calculation', JSON.stringify(data));
           
-          if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
-            html += '<p style="color: #4CAF50;"><strong>New recruiters added:</strong> ' + 
-              data.newRecruitersAdded.map(r => r.name).join(', ') + '</p>';
-          }
-          
-          // Summary table
-          html += '<h4 style="margin-top: 20px;">Weekly Summary</h4>';
-          html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Recruiters</th><th>Total Hours</th></tr></thead><tbody>';
-          for (const [weekName, weekData] of Object.entries(data.results)) {
-            const week = weekData;
-            html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' + 
-              week.totalOrders + '</td><td>' + week.recruiters.length + '</td><td><strong>' + week.totalHours.toLocaleString() + '</strong></td></tr>';
-          }
-          html += '</tbody></table>';
-          
-          // Detailed breakdown per week
-          for (const [weekName, weekData] of Object.entries(data.results)) {
-            const week = weekData;
-            if (week.recruiters && week.recruiters.length > 0) {
-              html += '<h4 style="margin-top: 20px;">' + weekName + ' - Hours by Recruiter</h4>';
-              html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th></tr></thead><tbody>';
-              for (const r of week.recruiters) {
-                html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() + '</td></tr>';
-              }
-              html += '</tbody></table>';
-            }
-          }
-          
-          results.innerHTML = html;
+          results.innerHTML = renderCalculationResults(data);
           showAlert('Calculation complete!');
           loadRecruiters();
         } else {
@@ -987,6 +1010,7 @@ app.http('adminPortal', {
     async function init() {
       await loadDivisions();
       await loadRecruiters();
+      loadLastCalculation();
       document.getElementById('lastUpdated').textContent = 'Loaded: ' + new Date().toLocaleString();
     }
 
