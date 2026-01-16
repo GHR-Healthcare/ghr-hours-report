@@ -149,7 +149,7 @@ async function sendReportEmail(context: InvocationContext, subject: string): Pro
 // This ensures each day's column in the report has a final snapshot
 // =============================================================================
 app.timer('nightlySnapshot', {
-  schedule: '0 59 4 * * *', // 11:59 PM EST = 4:59 AM UTC next day
+  schedule: '0 59 23 * * *', // 11:59 PM EST
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== NIGHTLY SNAPSHOT TRIGGERED (11:59 PM EST) ===');
     
@@ -170,7 +170,7 @@ app.timer('nightlySnapshot', {
 // The Saturday night snapshot should have run, so last week is complete
 // =============================================================================
 app.timer('mondayWeeklyRecap', {
-  schedule: '0 0 13 * * 1', // 8:00 AM EST Monday = 13:00 UTC
+  schedule: '0 0 8 * * 1', // 8:00 AM EST Monday
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== MONDAY WEEKLY RECAP TRIGGERED (8:00 AM EST) ===');
     
@@ -196,7 +196,7 @@ app.timer('mondayWeeklyRecap', {
 
 // 8:00 AM EST (13:00 UTC) - Mon-Fri
 app.timer('dailyReport8am', {
-  schedule: '0 0 13 * * 1-5', // 8:00 AM EST Mon-Fri
+  schedule: '0 0 8 * * 1-5', // 8:00 AM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== 8 AM DAILY REPORT TRIGGERED ===');
     
@@ -213,7 +213,7 @@ app.timer('dailyReport8am', {
 
 // 12:00 PM EST (17:00 UTC) - Mon-Fri
 app.timer('dailyReport12pm', {
-  schedule: '0 0 17 * * 1-5', // 12:00 PM EST Mon-Fri
+  schedule: '0 0 12 * * 1-5', // 12:00 PM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== 12 PM DAILY REPORT TRIGGERED ===');
     
@@ -230,7 +230,7 @@ app.timer('dailyReport12pm', {
 
 // 5:00 PM EST (22:00 UTC) - Mon-Fri
 app.timer('dailyReport5pm', {
-  schedule: '0 0 22 * * 1-5', // 5:00 PM EST Mon-Fri
+  schedule: '0 0 17 * * 1-5', // 5:00 PM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== 5 PM DAILY REPORT TRIGGERED ===');
     
@@ -250,7 +250,7 @@ app.timer('dailyReport5pm', {
 // Removes old snapshot data to keep database clean
 // =============================================================================
 app.timer('nightlyCleanup', {
-  schedule: '0 0 7 * * *', // 2:00 AM EST = 7:00 AM UTC
+  schedule: '0 0 2 * * *', // 2:00 AM EST
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== NIGHTLY CLEANUP TRIGGERED (2:00 AM EST) ===');
     

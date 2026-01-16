@@ -13,12 +13,27 @@ import {
 
 class DatabaseService {
   private pool: sql.ConnectionPool | null = null;
+  private ctmsyncPool: sql.ConnectionPool | null = null;
   private config: sql.config;
+  private ctmsyncConfig: sql.config;
 
   constructor() {
+    // Main hours_report database
     this.config = {
       server: process.env.SQL_SERVER || '',
       database: process.env.SQL_DATABASE || 'hours_report',
+      user: process.env.SQL_USER || '',
+      password: process.env.SQL_PASSWORD || '',
+      options: {
+        encrypt: true,
+        trustServerCertificate: false
+      }
+    };
+    
+    // ghr_ctmsync database (read-only mirror of ATS)
+    this.ctmsyncConfig = {
+      server: process.env.SQL_SERVER || '',
+      database: process.env.SQL_DATABASE_CTMSYNC || 'ghr_ctmsync',
       user: process.env.SQL_USER || '',
       password: process.env.SQL_PASSWORD || '',
       options: {
@@ -35,10 +50,21 @@ class DatabaseService {
     return this.pool;
   }
 
+  async getCtmsyncPool(): Promise<sql.ConnectionPool> {
+    if (!this.ctmsyncPool) {
+      this.ctmsyncPool = await new sql.ConnectionPool(this.ctmsyncConfig).connect();
+    }
+    return this.ctmsyncPool;
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.close();
       this.pool = null;
+    }
+    if (this.ctmsyncPool) {
+      await this.ctmsyncPool.close();
+      this.ctmsyncPool = null;
     }
   }
 
@@ -345,7 +371,7 @@ class DatabaseService {
   // Get hours directly from ghr_ctmsync orders table
   // This bypasses the ClearConnect API and queries the source data directly
   async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<Map<number, number>> {
-    const pool = await this.getPool();
+    const pool = await this.getCtmsyncPool();
     
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
@@ -354,9 +380,9 @@ class DatabaseService {
         SELECT 
           u.userid,
           SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
-        FROM ghr_ctmsync.dbo.orders o
-        INNER JOIN ghr_ctmsync.dbo.profile_temp pt ON o.filledby = pt.recordid
-        INNER JOIN ghr_ctmsync.dbo.users u ON pt.staffingspecialist = u.userid
+        FROM dbo.orders o
+        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
+        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
         WHERE o.status = 'filled'
           AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
         GROUP BY u.userid
@@ -372,13 +398,13 @@ class DatabaseService {
 
   // Get user name from ctmsync users table
   async getUserNameFromCtmsync(userId: number): Promise<string | null> {
-    const pool = await this.getPool();
+    const pool = await this.getCtmsyncPool();
     
     const result = await pool.request()
       .input('userId', sql.Int, userId)
       .query(`
         SELECT firstname, lastname 
-        FROM ghr_ctmsync.dbo.users 
+        FROM dbo.users 
         WHERE userid = @userId
       `);
     
