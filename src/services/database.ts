@@ -370,10 +370,11 @@ class DatabaseService {
 
   // Get hours directly from ghr_ctmsync orders table
   // This bypasses the ClearConnect API and queries the source data directly
-  // Returns { hoursMap, orderCount }
-  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, orderCount: number }> {
+  // Returns { hoursMap, orderCount, regionNames }
+  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, orderCount: number, regionNames: string[] }> {
     const pool = await this.getCtmsyncPool();
     
+    // Get hours and order counts by staffer
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
@@ -397,7 +398,24 @@ class DatabaseService {
       totalOrders += row.order_count || 0;
     }
     
-    return { hoursMap, orderCount: totalOrders };
+    // Get distinct region names from filled orders
+    const regionsResult = await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .input('weekEnd', sql.Date, weekEnd)
+      .query(`
+        SELECT DISTINCT r.regionname
+        FROM dbo.orders o
+        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
+        INNER JOIN dbo.regions r ON pt.homeregion = r.regionid
+        WHERE o.status = 'filled'
+          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+          AND r.regionname IS NOT NULL
+        ORDER BY r.regionname
+      `);
+    
+    const regionNames = regionsResult.recordset.map((row: any) => row.regionname);
+    
+    return { hoursMap, orderCount: totalOrders, regionNames };
   }
 
   // Get user name from ctmsync users table

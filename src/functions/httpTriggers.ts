@@ -293,6 +293,7 @@ app.http('calculateWeekly', {
         nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] }
       };
       const newRecruiters: any[] = [];
+      const allRegionNames = new Set<string>();
       
       // Process all three weeks
       const weeksToProcess: Array<[string, Date, Date]> = [
@@ -308,7 +309,10 @@ app.http('calculateWeekly', {
         context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
         
         // Query orders directly from database - much faster and more accurate
-        const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
+        const { hoursMap: hoursByRecruiter, orderCount, regionNames } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
+        
+        // Collect all region names across all weeks
+        regionNames.forEach(name => allRegionNames.add(name));
         
         context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
         results[weekName].totalOrders = orderCount;
@@ -380,6 +384,7 @@ app.http('calculateWeekly', {
           calculatedAt: now.toISOString(),
           snapshotDayOfWeek,
           snapshotDayName: ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek],
+          regionsWithFilledOrders: [...allRegionNames].sort(),
           newRecruitersAdded: newRecruiters,
           results
         } 
