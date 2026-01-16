@@ -288,9 +288,9 @@ app.http('calculateWeekly', {
       context.log(`Found ${activeUserIds.size} active recruiters`);
       
       const results: any = {
-        lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalHours: 0, recruiters: [] as any[] },
-        thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalHours: 0, recruiters: [] as any[] },
-        nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalHours: 0, recruiters: [] as any[] }
+        lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
+        thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
+        nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] }
       };
       const newRecruiters: any[] = [];
       
@@ -308,9 +308,10 @@ app.http('calculateWeekly', {
         context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
         
         // Query orders directly from database - much faster and more accurate
-        const hoursByRecruiter = await databaseService.getHoursFromOrders(weekStart, weekEnd);
+        const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
         
-        context.log(`${weekName}: Found hours for ${hoursByRecruiter.size} staffers`);
+        context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
+        results[weekName].totalOrders = orderCount;
         
         // Check for new recruiters and auto-add them
         for (const [userId, hours] of hoursByRecruiter) {

@@ -370,7 +370,8 @@ class DatabaseService {
 
   // Get hours directly from ghr_ctmsync orders table
   // This bypasses the ClearConnect API and queries the source data directly
-  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<Map<number, number>> {
+  // Returns { hoursMap, orderCount }
+  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, orderCount: number }> {
     const pool = await this.getCtmsyncPool();
     
     const result = await pool.request()
@@ -379,6 +380,7 @@ class DatabaseService {
       .query(`
         SELECT 
           u.userid,
+          COUNT(*) AS order_count,
           SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
         FROM dbo.orders o
         INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
@@ -389,11 +391,13 @@ class DatabaseService {
       `);
     
     const hoursMap = new Map<number, number>();
+    let totalOrders = 0;
     for (const row of result.recordset) {
       hoursMap.set(row.userid, row.total_hours || 0);
+      totalOrders += row.order_count || 0;
     }
     
-    return hoursMap;
+    return { hoursMap, orderCount: totalOrders };
   }
 
   // Get user name from ctmsync users table

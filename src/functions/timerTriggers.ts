@@ -77,9 +77,9 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
     
     // Query orders directly from database - much faster and more accurate
-    const hoursByRecruiter = await databaseService.getHoursFromOrders(weekStart, weekEnd);
+    const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
     
-    context.log(`${weekName}: Found hours for ${hoursByRecruiter.size} staffers`);
+    context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
     
     // Check for new recruiters and auto-add them
     for (const [userId, hours] of hoursByRecruiter) {
