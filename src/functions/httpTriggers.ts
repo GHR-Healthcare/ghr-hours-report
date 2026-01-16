@@ -285,11 +285,11 @@ app.http('calculateWeekly', {
       context.log(`Next week: ${formatDate(nextWeekSunday)} to ${formatDate(nextWeekSaturday)}`);
       context.log(`Snapshot day of week: ${snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek]})`);
       
-      // Get configured recruiters with names for display
-      const configuredRecruiters = await databaseService.getRecruiters(true);
-      const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
-      const recruiterNames = new Map(configuredRecruiters.map(r => [r.user_id, r.user_name]));
-      context.log(`Found ${configuredUserIds.size} configured recruiters`);
+      // Get active, non-deleted recruiters only
+      const activeRecruiters = await databaseService.getRecruiters(false);
+      const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
+      const recruiterNames = new Map(activeRecruiters.map(r => [r.user_id, r.user_name]));
+      context.log(`Found ${activeUserIds.size} active recruiters`);
       
       const results: any = {
         lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
@@ -340,7 +340,7 @@ app.http('calculateWeekly', {
         const tempIds = [...new Set(allOrders.map(o => o.tempId).filter(id => id))];
         const tempsMap = await clearConnectService.getTempsBatch(tempIds);
         
-        // Calculate hours by recruiter
+        // Calculate hours by recruiter (only for active recruiters)
         const hoursByRecruiter: Record<number, number> = {};
         
         for (const order of allOrders) {
@@ -349,11 +349,12 @@ app.http('calculateWeekly', {
           
           const recruiterId = parseInt(temp.staffingSpecialist, 10);
           
-          // Auto-add recruiter if not in database (including deleted - won't re-add deleted recruiters)
-          if (!configuredUserIds.has(recruiterId)) {
-            // Check if recruiter exists at all (including deleted)
+          // Check if this is a new recruiter we haven't seen before
+          if (!activeUserIds.has(recruiterId)) {
+            // Check if recruiter exists at all (including deleted/inactive)
             const exists = await databaseService.recruiterExists(recruiterId);
             if (!exists) {
+              // Auto-add new recruiter - they'll be active by default
               try {
                 const user = await clearConnectService.getUser(temp.staffingSpecialist);
                 const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
@@ -366,14 +367,19 @@ app.http('calculateWeekly', {
                   display_order: 99
                 });
                 
+                // Add to active set so their hours get counted
+                activeUserIds.add(recruiterId);
+                recruiterNames.set(recruiterId, userName);
                 newRecruiters.push({ userId: recruiterId, name: userName });
                 context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
               } catch (addError) {
                 context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
               }
             }
-            // Mark as seen so we don't check again this run
-            configuredUserIds.add(recruiterId);
+            // If recruiter exists but is deleted/inactive, skip their hours
+            if (!activeUserIds.has(recruiterId)) {
+              continue;
+            }
           }
           
           const startTime = new Date(order.shiftStartTime);
@@ -919,7 +925,7 @@ app.http('adminPortal', {
     // Preview
     function loadPreview(includeLastWeek) {
       const frame = document.getElementById('preview-frame');
-      frame.src = API_BASE + '/report/html?includeLastWeek=' + includeLastWeek;
+      frame.src = API_BASE + '/report/html?includeLastWeek=' + includeLastWeek + '&t=' + Date.now();
     }
 
     // Render calculation results HTML

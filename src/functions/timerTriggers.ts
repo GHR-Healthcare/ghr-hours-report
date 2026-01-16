@@ -62,9 +62,10 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   const regionIdString = regionIds.join(',');
   context.log(`Using ${regionIds.length} region IDs from database`);
   
-  // Get configured recruiters
-  const configuredRecruiters = await databaseService.getRecruiters(true);
-  const configuredUserIds = new Set(configuredRecruiters.map(r => r.user_id));
+  // Get active, non-deleted recruiters only
+  const activeRecruiters = await databaseService.getRecruiters(false);
+  const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
+  context.log(`Found ${activeUserIds.size} active recruiters`);
   
   // Process all three weeks
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
@@ -108,7 +109,7 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     const tempIds = [...new Set(allOrders.map((o: any) => o.tempId).filter((id: any) => id))];
     const tempsMap = await clearConnectService.getTempsBatch(tempIds as string[]);
     
-    // Calculate hours by recruiter
+    // Calculate hours by recruiter (only for active recruiters)
     const hoursByRecruiter: Record<number, number> = {};
     
     for (const order of allOrders) {
@@ -117,11 +118,12 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
       
       const recruiterId = parseInt(temp.staffingSpecialist, 10);
       
-      // Auto-add recruiter if not in database (including deleted - won't re-add deleted recruiters)
-      if (!configuredUserIds.has(recruiterId)) {
-        // Check if recruiter exists at all (including deleted)
+      // Check if this is a new recruiter we haven't seen before
+      if (!activeUserIds.has(recruiterId)) {
+        // Check if recruiter exists at all (including deleted/inactive)
         const exists = await databaseService.recruiterExists(recruiterId);
         if (!exists) {
+          // Auto-add new recruiter - they'll be active by default
           try {
             const user = await clearConnectService.getUser(temp.staffingSpecialist);
             const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${recruiterId}`;
@@ -134,13 +136,17 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
               display_order: 99
             });
             
+            // Add to active set so their hours get counted
+            activeUserIds.add(recruiterId);
             context.log(`Auto-added recruiter: ${userName} (ID: ${recruiterId})`);
           } catch (addError) {
             context.log(`Error adding recruiter ${recruiterId}: ${addError}`);
           }
         }
-        // Mark as seen so we don't check again this run
-        configuredUserIds.add(recruiterId);
+        // If recruiter exists but is deleted/inactive, skip their hours
+        if (!activeUserIds.has(recruiterId)) {
+          continue;
+        }
       }
       
       const startTime = new Date(order.shiftStartTime);
@@ -239,9 +245,9 @@ app.timer('mondayWeeklyRecap', {
 // Regular progress updates showing all 3 weeks (last, this, next)
 // =============================================================================
 
-// 8:00 AM EST (13:00 UTC) - Tue-Fri only (Monday has separate recap)
+// 8:00 AM EST (13:00 UTC) - Mon-Fri
 app.timer('dailyReport8am', {
-  schedule: '0 0 13 * * 2-5', // 8:00 AM EST Tue-Fri
+  schedule: '0 0 13 * * 1-5', // 8:00 AM EST Mon-Fri
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
     context.log('=== 8 AM DAILY REPORT TRIGGERED ===');
     
