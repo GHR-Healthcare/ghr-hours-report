@@ -62,11 +62,12 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
   context.log(`Found ${activeUserIds.size} active recruiters`);
   
-  // Only process lastWeek and thisWeek for snapshots
-  // nextWeek shouldn't have snapshots saved because those days haven't happened yet
+  // Process all three weeks - each gets a snapshot for the current day slot
+  // This means on Monday, we save Sun/Mon cumulative totals for last week, this week, AND next week
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
     { name: 'lastWeek', data: weekInfo.lastWeek },
-    { name: 'thisWeek', data: weekInfo.thisWeek }
+    { name: 'thisWeek', data: weekInfo.thisWeek },
+    { name: 'nextWeek', data: weekInfo.nextWeek }
   ];
   
   // Process each week
@@ -81,29 +82,31 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     
     context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
     
-    // Check for new recruiters and auto-add them
-    for (const [userId, hours] of hoursByRecruiter) {
-      if (!activeUserIds.has(userId)) {
-        // Check if recruiter exists at all (including deleted/inactive)
-        const exists = await databaseService.recruiterExists(userId);
-        if (!exists) {
-          // Auto-add new recruiter - they'll be active by default
-          try {
-            const userName = await databaseService.getUserNameFromCtmsync(userId);
-            
-            await databaseService.createRecruiter({
-              user_id: userId,
-              user_name: userName || `User ${userId}`,
-              division_id: 1,
-              weekly_goal: 0,
-              display_order: 99
-            });
-            
-            // Add to active set so their hours get counted
-            activeUserIds.add(userId);
-            context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
-          } catch (addError) {
-            context.log(`Error adding recruiter ${userId}: ${addError}`);
+    // Check for new recruiters and auto-add them (only for thisWeek to avoid duplicates)
+    if (weekName === 'thisWeek') {
+      for (const [userId, hours] of hoursByRecruiter) {
+        if (!activeUserIds.has(userId)) {
+          // Check if recruiter exists at all (including deleted/inactive)
+          const exists = await databaseService.recruiterExists(userId);
+          if (!exists) {
+            // Auto-add new recruiter - they'll be active by default
+            try {
+              const userName = await databaseService.getUserNameFromCtmsync(userId);
+              
+              await databaseService.createRecruiter({
+                user_id: userId,
+                user_name: userName || `User ${userId}`,
+                division_id: 1,
+                weekly_goal: 0,
+                display_order: 99
+              });
+              
+              // Add to active set so their hours get counted
+              activeUserIds.add(userId);
+              context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
+            } catch (addError) {
+              context.log(`Error adding recruiter ${userId}: ${addError}`);
+            }
           }
         }
       }

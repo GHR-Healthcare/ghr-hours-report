@@ -388,7 +388,7 @@ class DatabaseService {
   async getWeeklyTotals(): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
     
-    // Get last week and this week from snapshots
+    // Get all three weeks from snapshots
     const result = await pool.request().query(`
       SELECT 
         week_period,
@@ -401,7 +401,6 @@ class DatabaseService {
         SUM(weekly_total) AS total,
         SUM(weekly_goal) AS goal
       FROM dbo.vw_report_pivoted
-      WHERE week_period IN ('Last Week', 'This Week')
       GROUP BY week_period
     `);
 
@@ -426,47 +425,8 @@ class DatabaseService {
       
       if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
       if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
+      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
     });
-
-    // Get next week from live query
-    // Calculate next week's date range
-    const now = new Date();
-    const currentDayOfWeek = now.getDay();
-    const thisWeekSunday = new Date(now);
-    thisWeekSunday.setDate(now.getDate() - currentDayOfWeek);
-    thisWeekSunday.setHours(0, 0, 0, 0);
-    
-    const nextWeekSunday = new Date(thisWeekSunday);
-    nextWeekSunday.setDate(thisWeekSunday.getDate() + 7);
-    const nextWeekSaturday = new Date(nextWeekSunday);
-    nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
-    
-    const nextWeekStart = nextWeekSunday.toISOString().split('T')[0];
-    const nextWeekEnd = nextWeekSaturday.toISOString().split('T')[0];
-    
-    const liveNextWeek = await this.getLiveHoursByDay(nextWeekStart, nextWeekEnd);
-    
-    // Get total goal from active recruiters
-    const goalResult = await pool.request().query(`
-      SELECT SUM(weekly_goal) AS total_goal FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
-    `);
-    const totalGoal = goalResult.recordset[0]?.total_goal || 0;
-    
-    // For next week, total is sum of all days (not cumulative since each column is per-day)
-    const nextWeekTotal = liveNextWeek.sun_mon + liveNextWeek.tue + liveNextWeek.wed + 
-                          liveNextWeek.thu + liveNextWeek.fri + liveNextWeek.sat;
-    
-    totals.nextWeek = {
-      week_period: 'Next Week',
-      sun_mon: liveNextWeek.sun_mon,
-      tue: liveNextWeek.tue,
-      wed: liveNextWeek.wed,
-      thu: liveNextWeek.thu,
-      fri: liveNextWeek.fri,
-      sat: liveNextWeek.sat,
-      total: Math.round(nextWeekTotal * 100) / 100,
-      goal: totalGoal
-    };
 
     return totals;
   }
@@ -475,7 +435,7 @@ class DatabaseService {
   async getWeeklyTotalsWithOffset(weekOffset: number): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
     
-    // Get last week and this week from snapshots (with offset)
+    // Get all three weeks from snapshots (with offset)
     const result = await pool.request()
       .input('weekOffset', sql.Int, weekOffset)
       .query(`
@@ -499,7 +459,7 @@ class DatabaseService {
             END AS week_period
           FROM dbo.weekly_snapshots ws
           CROSS JOIN WeekDates wd
-          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start)
+          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start, wd.next_week_start)
         ),
         ReportData AS (
           SELECT 
@@ -514,7 +474,7 @@ class DatabaseService {
             ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
             ISNULL(MAX(sd.total_hours), 0) AS weekly_total
           FROM dbo.recruiter_config rc
-          CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week') wp
+          CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
           LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
           WHERE rc.is_active = 1 AND rc.is_deleted = 0
           GROUP BY rc.user_id, rc.weekly_goal, wp.week_period
@@ -554,49 +514,8 @@ class DatabaseService {
       
       if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
       if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
+      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
     });
-
-    // Get next week from live query (with offset applied)
-    const now = new Date();
-    const offsetDate = new Date(now);
-    offsetDate.setDate(now.getDate() + (weekOffset * 7));
-    
-    const currentDayOfWeek = offsetDate.getDay();
-    const thisWeekSunday = new Date(offsetDate);
-    thisWeekSunday.setDate(offsetDate.getDate() - currentDayOfWeek);
-    thisWeekSunday.setHours(0, 0, 0, 0);
-    
-    const nextWeekSunday = new Date(thisWeekSunday);
-    nextWeekSunday.setDate(thisWeekSunday.getDate() + 7);
-    const nextWeekSaturday = new Date(nextWeekSunday);
-    nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
-    
-    const nextWeekStart = nextWeekSunday.toISOString().split('T')[0];
-    const nextWeekEnd = nextWeekSaturday.toISOString().split('T')[0];
-    
-    const liveNextWeek = await this.getLiveHoursByDay(nextWeekStart, nextWeekEnd);
-    
-    // Get total goal from active recruiters
-    const goalResult = await pool.request().query(`
-      SELECT SUM(weekly_goal) AS total_goal FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
-    `);
-    const totalGoal = goalResult.recordset[0]?.total_goal || 0;
-    
-    // For next week, total is sum of all days (not cumulative since each column is per-day)
-    const nextWeekTotal = liveNextWeek.sun_mon + liveNextWeek.tue + liveNextWeek.wed + 
-                          liveNextWeek.thu + liveNextWeek.fri + liveNextWeek.sat;
-    
-    totals.nextWeek = {
-      week_period: 'Next Week',
-      sun_mon: liveNextWeek.sun_mon,
-      tue: liveNextWeek.tue,
-      wed: liveNextWeek.wed,
-      thu: liveNextWeek.thu,
-      fri: liveNextWeek.fri,
-      sat: liveNextWeek.sat,
-      total: Math.round(nextWeekTotal * 100) / 100,
-      goal: totalGoal
-    };
 
     return totals;
   }
