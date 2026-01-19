@@ -387,6 +387,8 @@ class DatabaseService {
 
   async getWeeklyTotals(): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
+    
+    // Get last week and this week from snapshots
     const result = await pool.request().query(`
       SELECT 
         week_period,
@@ -399,6 +401,7 @@ class DatabaseService {
         SUM(weekly_total) AS total,
         SUM(weekly_goal) AS goal
       FROM dbo.vw_report_pivoted
+      WHERE week_period IN ('Last Week', 'This Week')
       GROUP BY week_period
     `);
 
@@ -423,8 +426,43 @@ class DatabaseService {
       
       if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
       if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
-      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
     });
+
+    // Get next week from live query
+    // Calculate next week's date range
+    const now = new Date();
+    const currentDayOfWeek = now.getDay();
+    const thisWeekSunday = new Date(now);
+    thisWeekSunday.setDate(now.getDate() - currentDayOfWeek);
+    thisWeekSunday.setHours(0, 0, 0, 0);
+    
+    const nextWeekSunday = new Date(thisWeekSunday);
+    nextWeekSunday.setDate(thisWeekSunday.getDate() + 7);
+    const nextWeekSaturday = new Date(nextWeekSunday);
+    nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
+    
+    const nextWeekStart = nextWeekSunday.toISOString().split('T')[0];
+    const nextWeekEnd = nextWeekSaturday.toISOString().split('T')[0];
+    
+    const liveNextWeek = await this.getLiveHoursByDay(nextWeekStart, nextWeekEnd);
+    
+    // Get total goal from active recruiters
+    const goalResult = await pool.request().query(`
+      SELECT SUM(weekly_goal) AS total_goal FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
+    `);
+    const totalGoal = goalResult.recordset[0]?.total_goal || 0;
+    
+    totals.nextWeek = {
+      week_period: 'Next Week',
+      sun_mon: liveNextWeek.sun_mon,
+      tue: liveNextWeek.tue,
+      wed: liveNextWeek.wed,
+      thu: liveNextWeek.thu,
+      fri: liveNextWeek.fri,
+      sat: liveNextWeek.sat,
+      total: liveNextWeek.sat, // Cumulative through Saturday is the total
+      goal: totalGoal
+    };
 
     return totals;
   }
@@ -432,6 +470,8 @@ class DatabaseService {
   // Get weekly totals with a week offset (for Monday recap)
   async getWeeklyTotalsWithOffset(weekOffset: number): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
+    
+    // Get last week and this week from snapshots (with offset)
     const result = await pool.request()
       .input('weekOffset', sql.Int, weekOffset)
       .query(`
@@ -455,7 +495,7 @@ class DatabaseService {
             END AS week_period
           FROM dbo.weekly_snapshots ws
           CROSS JOIN WeekDates wd
-          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start, wd.next_week_start)
+          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start)
         ),
         ReportData AS (
           SELECT 
@@ -470,7 +510,7 @@ class DatabaseService {
             ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
             ISNULL(MAX(sd.total_hours), 0) AS weekly_total
           FROM dbo.recruiter_config rc
-          CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
+          CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week') wp
           LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
           WHERE rc.is_active = 1 AND rc.is_deleted = 0
           GROUP BY rc.user_id, rc.weekly_goal, wp.week_period
@@ -510,8 +550,45 @@ class DatabaseService {
       
       if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
       if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
-      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
     });
+
+    // Get next week from live query (with offset applied)
+    const now = new Date();
+    const offsetDate = new Date(now);
+    offsetDate.setDate(now.getDate() + (weekOffset * 7));
+    
+    const currentDayOfWeek = offsetDate.getDay();
+    const thisWeekSunday = new Date(offsetDate);
+    thisWeekSunday.setDate(offsetDate.getDate() - currentDayOfWeek);
+    thisWeekSunday.setHours(0, 0, 0, 0);
+    
+    const nextWeekSunday = new Date(thisWeekSunday);
+    nextWeekSunday.setDate(thisWeekSunday.getDate() + 7);
+    const nextWeekSaturday = new Date(nextWeekSunday);
+    nextWeekSaturday.setDate(nextWeekSunday.getDate() + 6);
+    
+    const nextWeekStart = nextWeekSunday.toISOString().split('T')[0];
+    const nextWeekEnd = nextWeekSaturday.toISOString().split('T')[0];
+    
+    const liveNextWeek = await this.getLiveHoursByDay(nextWeekStart, nextWeekEnd);
+    
+    // Get total goal from active recruiters
+    const goalResult = await pool.request().query(`
+      SELECT SUM(weekly_goal) AS total_goal FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
+    `);
+    const totalGoal = goalResult.recordset[0]?.total_goal || 0;
+    
+    totals.nextWeek = {
+      week_period: 'Next Week',
+      sun_mon: liveNextWeek.sun_mon,
+      tue: liveNextWeek.tue,
+      wed: liveNextWeek.wed,
+      thu: liveNextWeek.thu,
+      fri: liveNextWeek.fri,
+      sat: liveNextWeek.sat,
+      total: liveNextWeek.sat,
+      goal: totalGoal
+    };
 
     return totals;
   }
@@ -584,6 +661,77 @@ class DatabaseService {
     }
     
     return null;
+  }
+
+  // Get live cumulative hours by day for a week (for forecasting next week and current week's remaining days)
+  // Returns cumulative totals through each day: sun_mon, tue (sun-tue), wed (sun-wed), etc.
+  // Only counts hours for active, non-deleted recruiters
+  async getLiveHoursByDay(weekStart: string, weekEnd: string): Promise<{ sun_mon: number, tue: number, wed: number, thu: number, fri: number, sat: number }> {
+    const ctmsyncPool = await this.getCtmsyncPool();
+    const hoursReportPool = await this.getPool();
+    
+    // Get active recruiter user IDs
+    const recruitersResult = await hoursReportPool.request().query(`
+      SELECT user_id FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
+    `);
+    const activeUserIds = new Set(recruitersResult.recordset.map((r: any) => r.user_id));
+    
+    if (activeUserIds.size === 0) {
+      return { sun_mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
+    }
+    
+    // Query orders grouped by day of week
+    const result = await ctmsyncPool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .input('weekEnd', sql.Date, weekEnd)
+      .query(`
+        SELECT 
+          u.userid,
+          DATEPART(weekday, o.shiftstarttime) AS day_of_week,
+          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
+        FROM dbo.orders o
+        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
+        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
+        WHERE o.status = 'filled'
+          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        GROUP BY u.userid, DATEPART(weekday, o.shiftstarttime)
+      `);
+    
+    // Accumulate hours by day (DATEPART weekday: 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat)
+    const dayTotals = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
+    
+    for (const row of result.recordset) {
+      // Only count hours for active recruiters
+      if (!activeUserIds.has(row.userid)) continue;
+      
+      const hours = row.total_hours || 0;
+      switch (row.day_of_week) {
+        case 1: dayTotals.sun += hours; break;
+        case 2: dayTotals.mon += hours; break;
+        case 3: dayTotals.tue += hours; break;
+        case 4: dayTotals.wed += hours; break;
+        case 5: dayTotals.thu += hours; break;
+        case 6: dayTotals.fri += hours; break;
+        case 7: dayTotals.sat += hours; break;
+      }
+    }
+    
+    // Return cumulative totals through each day
+    const sun_mon = dayTotals.sun + dayTotals.mon;
+    const tue = sun_mon + dayTotals.tue;
+    const wed = tue + dayTotals.wed;
+    const thu = wed + dayTotals.thu;
+    const fri = thu + dayTotals.fri;
+    const sat = fri + dayTotals.sat;
+    
+    return {
+      sun_mon: Math.round(sun_mon * 100) / 100,
+      tue: Math.round(tue * 100) / 100,
+      wed: Math.round(wed * 100) / 100,
+      thu: Math.round(thu * 100) / 100,
+      fri: Math.round(fri * 100) / 100,
+      sat: Math.round(sat * 100) / 100
+    };
   }
 }
 

@@ -62,11 +62,11 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
   context.log(`Found ${activeUserIds.size} active recruiters`);
   
-  // Process all three weeks
+  // Only process lastWeek and thisWeek for snapshots
+  // nextWeek shouldn't have snapshots saved because those days haven't happened yet
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
     { name: 'lastWeek', data: weekInfo.lastWeek },
-    { name: 'thisWeek', data: weekInfo.thisWeek },
-    { name: 'nextWeek', data: weekInfo.nextWeek }
+    { name: 'thisWeek', data: weekInfo.thisWeek }
   ];
   
   // Process each week
