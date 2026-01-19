@@ -324,6 +324,67 @@ class DatabaseService {
     return result.recordset;
   }
 
+  // Get report data with a week offset (for Monday recap which needs to shift back 1 week)
+  async getReportDataWithOffset(weekOffset: number): Promise<ReportRow[]> {
+    const pool = await this.getPool();
+    
+    // Calculate the reference date by offsetting from today
+    const result = await pool.request()
+      .input('weekOffset', sql.Int, weekOffset)
+      .query(`
+        WITH WeekDates AS (
+          SELECT 
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS this_week_start,
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1 - 7, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS last_week_start,
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1 + 7, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS next_week_start
+        ),
+        SnapshotData AS (
+          SELECT 
+            ws.user_id,
+            ws.week_start,
+            ws.day_of_week,
+            ws.total_hours,
+            CASE 
+              WHEN ws.week_start = wd.last_week_start THEN 'Last Week'
+              WHEN ws.week_start = wd.this_week_start THEN 'This Week'
+              WHEN ws.week_start = wd.next_week_start THEN 'Next Week'
+              ELSE 'Other'
+            END AS week_period
+          FROM dbo.weekly_snapshots ws
+          CROSS JOIN WeekDates wd
+          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start, wd.next_week_start)
+        )
+        SELECT 
+          rc.user_id,
+          rc.user_name AS recruiter_name,
+          rc.weekly_goal,
+          rc.display_order AS recruiter_order,
+          d.division_id,
+          d.division_name,
+          d.display_order AS division_order,
+          wp.week_period,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 0 THEN sd.total_hours END), 0) AS sun_mon,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 1 THEN sd.total_hours END), 0) AS tue,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 2 THEN sd.total_hours END), 0) AS wed,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 3 THEN sd.total_hours END), 0) AS thu,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
+          ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
+          ISNULL(MAX(sd.total_hours), 0) AS weekly_total
+        FROM dbo.recruiter_config rc
+        INNER JOIN dbo.divisions d ON rc.division_id = d.division_id
+        CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
+        LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
+        WHERE rc.is_active = 1 AND rc.is_deleted = 0 AND d.is_active = 1
+        GROUP BY 
+          rc.user_id, rc.user_name, rc.weekly_goal, rc.display_order,
+          d.division_id, d.division_name, d.display_order, 
+          wp.week_period
+        ORDER BY d.display_order, rc.display_order, wp.week_period
+      `);
+    
+    return result.recordset;
+  }
+
   async getWeeklyTotals(): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
     const pool = await this.getPool();
     const result = await pool.request().query(`
@@ -340,6 +401,93 @@ class DatabaseService {
       FROM dbo.vw_report_pivoted
       GROUP BY week_period
     `);
+
+    const totals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null } = {
+      lastWeek: null,
+      thisWeek: null,
+      nextWeek: null
+    };
+
+    result.recordset.forEach((row: any) => {
+      const weeklyTotal: WeeklyTotals = {
+        week_period: row.week_period,
+        sun_mon: row.sun_mon || 0,
+        tue: row.tue || 0,
+        wed: row.wed || 0,
+        thu: row.thu || 0,
+        fri: row.fri || 0,
+        sat: row.sat || 0,
+        total: row.total || 0,
+        goal: row.goal || 0
+      };
+      
+      if (row.week_period === 'Last Week') totals.lastWeek = weeklyTotal;
+      if (row.week_period === 'This Week') totals.thisWeek = weeklyTotal;
+      if (row.week_period === 'Next Week') totals.nextWeek = weeklyTotal;
+    });
+
+    return totals;
+  }
+
+  // Get weekly totals with a week offset (for Monday recap)
+  async getWeeklyTotalsWithOffset(weekOffset: number): Promise<{ lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null }> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('weekOffset', sql.Int, weekOffset)
+      .query(`
+        WITH WeekDates AS (
+          SELECT 
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS this_week_start,
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1 - 7, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS last_week_start,
+            DATEADD(day, -DATEPART(weekday, DATEADD(week, @weekOffset, GETDATE())) + 1 + 7, CAST(DATEADD(week, @weekOffset, GETDATE()) AS DATE)) AS next_week_start
+        ),
+        SnapshotData AS (
+          SELECT 
+            ws.user_id,
+            ws.week_start,
+            ws.day_of_week,
+            ws.total_hours,
+            CASE 
+              WHEN ws.week_start = wd.last_week_start THEN 'Last Week'
+              WHEN ws.week_start = wd.this_week_start THEN 'This Week'
+              WHEN ws.week_start = wd.next_week_start THEN 'Next Week'
+              ELSE 'Other'
+            END AS week_period
+          FROM dbo.weekly_snapshots ws
+          CROSS JOIN WeekDates wd
+          WHERE ws.week_start IN (wd.last_week_start, wd.this_week_start, wd.next_week_start)
+        ),
+        ReportData AS (
+          SELECT 
+            rc.user_id,
+            rc.weekly_goal,
+            wp.week_period,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 0 THEN sd.total_hours END), 0) AS sun_mon,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 1 THEN sd.total_hours END), 0) AS tue,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 2 THEN sd.total_hours END), 0) AS wed,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 3 THEN sd.total_hours END), 0) AS thu,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
+            ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
+            ISNULL(MAX(sd.total_hours), 0) AS weekly_total
+          FROM dbo.recruiter_config rc
+          CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
+          LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
+          WHERE rc.is_active = 1 AND rc.is_deleted = 0
+          GROUP BY rc.user_id, rc.weekly_goal, wp.week_period
+        )
+        SELECT 
+          week_period,
+          SUM(sun_mon) AS sun_mon,
+          SUM(tue) AS tue,
+          SUM(wed) AS wed,
+          SUM(thu) AS thu,
+          SUM(fri) AS fri,
+          SUM(sat) AS sat,
+          SUM(weekly_total) AS total,
+          SUM(weekly_goal) AS goal
+        FROM ReportData
+        GROUP BY week_period
+      `);
 
     const totals: { lastWeek: WeeklyTotals | null; thisWeek: WeeklyTotals | null; nextWeek: WeeklyTotals | null } = {
       lastWeek: null,

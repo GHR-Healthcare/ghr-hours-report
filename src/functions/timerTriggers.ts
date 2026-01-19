@@ -125,10 +125,22 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
 }
 
 // Send email report
-async function sendReportEmail(context: InvocationContext, subject: string): Promise<void> {
+// weekOffset: 0 for current week perspective, -1 for previous week perspective (Monday recap)
+async function sendReportEmail(context: InvocationContext, subject: string, weekOffset: number = 0): Promise<void> {
   // Get report data and generate HTML - always includes all 3 weeks
-  const reportData = await databaseService.getReportData();
-  const weeklyTotals = await databaseService.getWeeklyTotals();
+  let reportData;
+  let weeklyTotals;
+  
+  if (weekOffset === 0) {
+    // Normal daily report - use current week perspective
+    reportData = await databaseService.getReportData();
+    weeklyTotals = await databaseService.getWeeklyTotals();
+  } else {
+    // Monday recap or other offset report
+    reportData = await databaseService.getReportDataWithOffset(weekOffset);
+    weeklyTotals = await databaseService.getWeeklyTotalsWithOffset(weekOffset);
+  }
+  
   const html = emailService.generateReportHtml(reportData, weeklyTotals, true);
 
   // Send email
@@ -168,6 +180,7 @@ app.timer('nightlySnapshot', {
 // MONDAY 8 AM - Weekly Recap Email
 // Sends a complete recap of last week with all daily snapshots filled in
 // The Saturday night snapshot should have run, so last week is complete
+// Uses weekOffset of -1 to shift perspective back one week
 // =============================================================================
 app.timer('mondayWeeklyRecap', {
   schedule: '0 0 8 * * 1', // 8:00 AM EST Monday
@@ -178,8 +191,9 @@ app.timer('mondayWeeklyRecap', {
       // No recalculation needed - use the snapshots saved throughout last week
       // Saturday's nightly snapshot already captured the final totals
       
-      // Send the weekly recap email
-      await sendReportEmail(context, 'Weekly Hours Recap - Previous Week Final');
+      // Send the weekly recap email with week offset -1
+      // This shifts the perspective so "This Week" shows the completed week
+      await sendReportEmail(context, 'Weekly Hours Recap - Previous Week Final', -1);
       
       context.log('Monday weekly recap complete');
     } catch (error) {

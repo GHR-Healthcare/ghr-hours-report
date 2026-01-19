@@ -448,8 +448,18 @@ app.http('triggerEmail', {
         // No body or invalid JSON - use defaults
       }
       
-      const reportData = await databaseService.getReportData();
-      const weeklyTotals = await databaseService.getWeeklyTotals();
+      // For Monday recap, use week offset -1 to shift perspective back one week
+      let reportData;
+      let weeklyTotals;
+      
+      if (emailType === 'monday') {
+        reportData = await databaseService.getReportDataWithOffset(-1);
+        weeklyTotals = await databaseService.getWeeklyTotalsWithOffset(-1);
+      } else {
+        reportData = await databaseService.getReportData();
+        weeklyTotals = await databaseService.getWeeklyTotals();
+      }
+      
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
       
       const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
