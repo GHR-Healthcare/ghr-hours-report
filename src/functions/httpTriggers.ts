@@ -489,21 +489,36 @@ app.http('sendTestEmail', {
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     try {
       const body = await request.json() as any;
-      const { recipient, includeLastWeek } = body;
+      const { recipient, includeLastWeek, emailType } = body;
       
       if (!recipient) {
         return { status: 400, jsonBody: { error: 'recipient is required' } };
       }
       
-      const reportData = await databaseService.getReportData();
-      const weeklyTotals = await databaseService.getWeeklyTotals();
+      // For Monday recap, use week offset -1 to shift perspective back one week
+      let reportData;
+      let weeklyTotals;
+      
+      if (emailType === 'monday') {
+        reportData = await databaseService.getReportDataWithOffset(-1);
+        weeklyTotals = await databaseService.getWeeklyTotalsWithOffset(-1);
+      } else {
+        reportData = await databaseService.getReportData();
+        weeklyTotals = await databaseService.getWeeklyTotals();
+      }
+      
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek === true);
       
-      const subject = includeLastWeek ? '[TEST] Daily Hours - Last Week' : '[TEST] Daily Hours';
+      let subject: string;
+      if (emailType === 'monday') {
+        subject = '[TEST] Weekly Hours Recap - Previous Week Final';
+      } else {
+        subject = '[TEST] Daily Hours Report';
+      }
       
       await emailService.sendEmail([recipient], subject, html);
       
-      return { jsonBody: { success: true, recipient, includeLastWeek: includeLastWeek === true } };
+      return { jsonBody: { success: true, recipient, emailType: emailType || 'daily' } };
     } catch (error) {
       context.error('Error sending test email:', error);
       return { status: 500, jsonBody: { error: 'Failed to send test email', details: String(error) } };
@@ -934,13 +949,14 @@ app.http('adminPortal', {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recipient: recipient,
-            includeLastWeek: true
+            includeLastWeek: true,
+            emailType: selectedEmailType
           })
         });
         
         const data = await res.json();
         if (res.ok) {
-          showAlert('Test email sent to ' + recipient);
+          showAlert('Test email sent to ' + recipient + ' (' + (selectedEmailType === 'monday' ? 'Monday Recap' : 'Daily Report') + ')');
         } else {
           showAlert('Error: ' + (data.error || 'Unknown error'), 'error');
         }
