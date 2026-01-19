@@ -452,6 +452,10 @@ class DatabaseService {
     `);
     const totalGoal = goalResult.recordset[0]?.total_goal || 0;
     
+    // For next week, total is sum of all days (not cumulative since each column is per-day)
+    const nextWeekTotal = liveNextWeek.sun_mon + liveNextWeek.tue + liveNextWeek.wed + 
+                          liveNextWeek.thu + liveNextWeek.fri + liveNextWeek.sat;
+    
     totals.nextWeek = {
       week_period: 'Next Week',
       sun_mon: liveNextWeek.sun_mon,
@@ -460,7 +464,7 @@ class DatabaseService {
       thu: liveNextWeek.thu,
       fri: liveNextWeek.fri,
       sat: liveNextWeek.sat,
-      total: liveNextWeek.sat, // Cumulative through Saturday is the total
+      total: Math.round(nextWeekTotal * 100) / 100,
       goal: totalGoal
     };
 
@@ -578,6 +582,10 @@ class DatabaseService {
     `);
     const totalGoal = goalResult.recordset[0]?.total_goal || 0;
     
+    // For next week, total is sum of all days (not cumulative since each column is per-day)
+    const nextWeekTotal = liveNextWeek.sun_mon + liveNextWeek.tue + liveNextWeek.wed + 
+                          liveNextWeek.thu + liveNextWeek.fri + liveNextWeek.sat;
+    
     totals.nextWeek = {
       week_period: 'Next Week',
       sun_mon: liveNextWeek.sun_mon,
@@ -586,7 +594,7 @@ class DatabaseService {
       thu: liveNextWeek.thu,
       fri: liveNextWeek.fri,
       sat: liveNextWeek.sat,
-      total: liveNextWeek.sat,
+      total: Math.round(nextWeekTotal * 100) / 100,
       goal: totalGoal
     };
 
@@ -663,8 +671,8 @@ class DatabaseService {
     return null;
   }
 
-  // Get live cumulative hours by day for a week (for forecasting next week and current week's remaining days)
-  // Returns cumulative totals through each day: sun_mon, tue (sun-tue), wed (sun-wed), etc.
+  // Get live hours by day for a week (for forecasting next week)
+  // Returns per-day totals (NOT cumulative) - each column shows just that day's hours
   // Only counts hours for active, non-deleted recruiters
   async getLiveHoursByDay(weekStart: string, weekEnd: string): Promise<{ sun_mon: number, tue: number, wed: number, thu: number, fri: number, sat: number }> {
     const ctmsyncPool = await this.getCtmsyncPool();
@@ -716,21 +724,17 @@ class DatabaseService {
       }
     }
     
-    // Return cumulative totals through each day
+    // Return per-day totals (NOT cumulative) - matching original PHP behavior
+    // Sun/Mon combined in one column, others are individual days
     const sun_mon = dayTotals.sun + dayTotals.mon;
-    const tue = sun_mon + dayTotals.tue;
-    const wed = tue + dayTotals.wed;
-    const thu = wed + dayTotals.thu;
-    const fri = thu + dayTotals.fri;
-    const sat = fri + dayTotals.sat;
     
     return {
       sun_mon: Math.round(sun_mon * 100) / 100,
-      tue: Math.round(tue * 100) / 100,
-      wed: Math.round(wed * 100) / 100,
-      thu: Math.round(thu * 100) / 100,
-      fri: Math.round(fri * 100) / 100,
-      sat: Math.round(sat * 100) / 100
+      tue: Math.round(dayTotals.tue * 100) / 100,
+      wed: Math.round(dayTotals.wed * 100) / 100,
+      thu: Math.round(dayTotals.thu * 100) / 100,
+      fri: Math.round(dayTotals.fri * 100) / 100,
+      sat: Math.round(dayTotals.sat * 100) / 100
     };
   }
 }
