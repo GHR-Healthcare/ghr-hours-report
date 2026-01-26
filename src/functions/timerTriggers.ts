@@ -62,22 +62,35 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
   context.log(`Found ${activeUserIds.size} active recruiters`);
   
-  // Process all three weeks
-  const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}, slot: number}> = [
-    { name: 'lastWeek', data: weekInfo.lastWeek, slot: snapshotSlot },
-    { name: 'thisWeek', data: weekInfo.thisWeek, slot: snapshotSlot },
-    // Next Week always saves to slot 0 (Sun/Mon) - it's a forecast, not daily tracking
-    { name: 'nextWeek', data: weekInfo.nextWeek, slot: 0 }
+  const thisWeekStart = formatDate(weekInfo.thisWeek.sunday);
+  const nextWeekStart = formatDate(weekInfo.nextWeek.sunday);
+  
+  // On Sun/Mon (slot 0), clear out stale snapshots for This Week
+  // These are leftover from when this week was "Next Week" last week
+  // We start fresh each week for This Week
+  if (snapshotSlot === 0) {
+    const deletedThisWeek = await databaseService.clearWeekSnapshots(thisWeekStart);
+    context.log(`Cleared ${deletedThisWeek} stale snapshots for This Week (${thisWeekStart}) - fresh start`);
+    
+    // Also clear Next Week to start fresh
+    const deletedNextWeek = await databaseService.clearWeekSnapshots(nextWeekStart);
+    context.log(`Cleared ${deletedNextWeek} stale snapshots for Next Week (${nextWeekStart}) - fresh start`);
+  }
+  
+  // Process all three weeks - save to current day's slot
+  const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
+    { name: 'lastWeek', data: weekInfo.lastWeek },
+    { name: 'thisWeek', data: weekInfo.thisWeek },
+    { name: 'nextWeek', data: weekInfo.nextWeek }
   ];
   
-  // Process each week
-  for (const { name: weekName, data: weekData, slot: weekSlot } of weeksToProcess) {
+  for (const { name: weekName, data: weekData } of weeksToProcess) {
     const weekStart = formatDate(weekData.sunday);
     const weekEnd = formatDate(weekData.saturday);
     
-    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}, saving to slot ${weekSlot}`);
+    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}, saving to slot ${snapshotSlot}`);
     
-    // Query orders directly from database - much faster and more accurate
+    // Query orders directly from database
     const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
     
     context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
@@ -86,10 +99,8 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     if (weekName === 'thisWeek') {
       for (const [userId, hours] of hoursByRecruiter) {
         if (!activeUserIds.has(userId)) {
-          // Check if recruiter exists at all (including deleted/inactive)
           const exists = await databaseService.recruiterExists(userId);
           if (!exists) {
-            // Auto-add new recruiter - they'll be active by default
             try {
               const userName = await databaseService.getUserNameFromCtmsync(userId);
               
@@ -101,7 +112,6 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
                 display_order: 99
               });
               
-              // Add to active set so their hours get counted
               activeUserIds.add(userId);
               context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
             } catch (addError) {
@@ -119,7 +129,7 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
         await databaseService.upsertWeeklySnapshot(
           userId,
           weekStart,
-          weekSlot,
+          snapshotSlot,
           roundedHours
         );
       }

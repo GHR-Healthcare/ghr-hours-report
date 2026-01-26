@@ -303,6 +303,19 @@ class DatabaseService {
     return result.rowsAffected[0] || 0;
   }
 
+  // Clear all snapshots for a specific week - used when week rolls over
+  // to remove stale "Next Week" snapshots that are now "This Week"
+  async clearWeekSnapshots(weekStart: string): Promise<number> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .query(`
+        DELETE FROM dbo.weekly_snapshots 
+        WHERE week_start = @weekStart
+      `);
+    return result.rowsAffected[0] || 0;
+  }
+
   // REPORT DATA
 
   async getReportData(weekPeriod?: string): Promise<ReportRow[]> {
