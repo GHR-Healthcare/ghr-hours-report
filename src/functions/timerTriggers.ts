@@ -77,7 +77,10 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     context.log(`Cleared ${deletedNextWeek} stale snapshots for Next Week (${nextWeekStart}) - fresh start`);
   }
   
-  // Process all three weeks - save to current day's slot
+  // Collect all snapshots to save in a batch
+  const snapshotsToSave: Array<{userId: number, weekStart: string, dayOfWeek: number, totalHours: number}> = [];
+  
+  // Process all three weeks
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
     { name: 'lastWeek', data: weekInfo.lastWeek },
     { name: 'thisWeek', data: weekInfo.thisWeek },
@@ -88,7 +91,7 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     const weekStart = formatDate(weekData.sunday);
     const weekEnd = formatDate(weekData.saturday);
     
-    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}, saving to slot ${snapshotSlot}`);
+    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
     
     // Query orders directly from database
     const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
@@ -122,19 +125,23 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
       }
     }
     
-    // Save snapshots - only for active recruiters
+    // Collect snapshots for batch save
     for (const [userId, hours] of hoursByRecruiter) {
       if (activeUserIds.has(userId)) {
-        const roundedHours = Math.round(hours * 100) / 100;
-        await databaseService.upsertWeeklySnapshot(
+        snapshotsToSave.push({
           userId,
           weekStart,
-          snapshotSlot,
-          roundedHours
-        );
+          dayOfWeek: snapshotSlot,
+          totalHours: Math.round(hours * 100) / 100
+        });
       }
     }
   }
+  
+  // Save all snapshots in batch
+  context.log(`Saving ${snapshotsToSave.length} snapshots in batch...`);
+  await databaseService.upsertWeeklySnapshotsBatch(snapshotsToSave);
+  context.log(`Batch save complete`);
 }
 
 // Send email report
