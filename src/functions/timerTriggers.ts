@@ -62,20 +62,20 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
   context.log(`Found ${activeUserIds.size} active recruiters`);
   
-  // Process all three weeks - each gets a snapshot for the current day slot
-  // This means on Monday, we save Sun/Mon cumulative totals for last week, this week, AND next week
-  const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
-    { name: 'lastWeek', data: weekInfo.lastWeek },
-    { name: 'thisWeek', data: weekInfo.thisWeek },
-    { name: 'nextWeek', data: weekInfo.nextWeek }
+  // Process all three weeks
+  const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}, slot: number}> = [
+    { name: 'lastWeek', data: weekInfo.lastWeek, slot: snapshotSlot },
+    { name: 'thisWeek', data: weekInfo.thisWeek, slot: snapshotSlot },
+    // Next Week always saves to slot 0 (Sun/Mon) - it's a forecast, not daily tracking
+    { name: 'nextWeek', data: weekInfo.nextWeek, slot: 0 }
   ];
   
   // Process each week
-  for (const { name: weekName, data: weekData } of weeksToProcess) {
+  for (const { name: weekName, data: weekData, slot: weekSlot } of weeksToProcess) {
     const weekStart = formatDate(weekData.sunday);
     const weekEnd = formatDate(weekData.saturday);
     
-    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
+    context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}, saving to slot ${weekSlot}`);
     
     // Query orders directly from database - much faster and more accurate
     const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
@@ -119,7 +119,7 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
         await databaseService.upsertWeeklySnapshot(
           userId,
           weekStart,
-          snapshotSlot,
+          weekSlot,
           roundedHours
         );
       }
