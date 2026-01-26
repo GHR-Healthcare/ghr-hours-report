@@ -287,40 +287,17 @@ class DatabaseService {
       `);
   }
 
-  // Batch upsert for better performance - upserts multiple snapshots in a single query
+  // Batch upsert for better performance - processes snapshots in parallel batches
   async upsertWeeklySnapshotsBatch(snapshots: Array<{userId: number, weekStart: string, dayOfWeek: number, totalHours: number}>): Promise<void> {
     if (snapshots.length === 0) return;
     
-    const pool = await this.getPool();
-    
-    // Build a table-valued parameter style query using UNION ALL
-    // Process in chunks of 500 to avoid query size limits
-    const chunkSize = 500;
-    for (let i = 0; i < snapshots.length; i += chunkSize) {
-      const chunk = snapshots.slice(i, i + chunkSize);
-      
-      const values = chunk.map((s, idx) => 
-        `SELECT @userId${idx} AS user_id, @weekStart${idx} AS week_start, @dayOfWeek${idx} AS day_of_week, @totalHours${idx} AS total_hours`
-      ).join(' UNION ALL ');
-      
-      const request = pool.request();
-      chunk.forEach((s, idx) => {
-        request.input(`userId${idx}`, sql.Int, s.userId);
-        request.input(`weekStart${idx}`, sql.Date, s.weekStart);
-        request.input(`dayOfWeek${idx}`, sql.TinyInt, s.dayOfWeek);
-        request.input(`totalHours${idx}`, sql.Decimal(10, 2), s.totalHours);
-      });
-      
-      await request.query(`
-        MERGE dbo.weekly_snapshots AS target
-        USING (${values}) AS source
-        ON target.user_id = source.user_id AND target.week_start = source.week_start AND target.day_of_week = source.day_of_week
-        WHEN MATCHED THEN
-          UPDATE SET total_hours = source.total_hours, snapshot_taken_at = GETDATE()
-        WHEN NOT MATCHED THEN
-          INSERT (user_id, week_start, day_of_week, total_hours, snapshot_taken_at)
-          VALUES (source.user_id, source.week_start, source.day_of_week, source.total_hours, GETDATE());
-      `);
+    // Process in parallel batches of 10 concurrent requests
+    const batchSize = 10;
+    for (let i = 0; i < snapshots.length; i += batchSize) {
+      const batch = snapshots.slice(i, i + batchSize);
+      await Promise.all(batch.map(s => 
+        this.upsertWeeklySnapshot(s.userId, s.weekStart, s.dayOfWeek, s.totalHours)
+      ));
     }
   }
 
