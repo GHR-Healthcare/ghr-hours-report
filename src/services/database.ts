@@ -554,6 +554,8 @@ class DatabaseService {
     const pool = await this.getCtmsyncPool();
 
     // Get hours and order counts by staffer, with lunch minutes subtracted
+    // Use DefaultLunchMins from client profile instead of lesslunchmin from order
+    // because lesslunchmin is only populated after payment
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
@@ -561,11 +563,12 @@ class DatabaseService {
         SELECT
           u.userid,
           COUNT(*) AS order_count,
-          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(o.lesslunchmin, 0)) / 60.0 AS total_hours,
-          SUM(ISNULL(o.lesslunchmin, 0)) / 60.0 AS lunch_hours
+          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(pc.DefaultLunchMins, 0)) / 60.0 AS total_hours,
+          SUM(ISNULL(pc.DefaultLunchMins, 0)) / 60.0 AS lunch_hours
         FROM dbo.orders o
         INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
         INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
+        INNER JOIN dbo.profile_client pc ON o.customerid = pc.recordid
         WHERE o.status = 'filled'
           AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
         GROUP BY u.userid
