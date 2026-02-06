@@ -330,8 +330,10 @@ export class ClearConnectService {
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
 
-        // Give credit for full shift time (no lunch deduction)
-        const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        // Calculate shift time and subtract lunch minutes
+        const shiftMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        const lunchMinutes = parseInt(order.lessLunchMin || '0', 10);
+        const totalMinutes = shiftMinutes - lunchMinutes;
         const hours = totalMinutes / 60;
 
         if (!hoursByRecruiter[recruiterId]) {
@@ -391,8 +393,10 @@ export class ClearConnectService {
         const startTime = new Date(order.shiftStartTime);
         const endTime = new Date(order.shiftEndTime);
 
-        // Give credit for full shift time (no lunch deduction)
-        const totalMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        // Calculate shift time and subtract lunch minutes
+        const shiftMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+        const lunchMinutes = parseInt(order.lessLunchMin || '0', 10);
+        const totalMinutes = shiftMinutes - lunchMinutes;
         const hours = totalMinutes / 60;
 
         if (!hoursByRecruiter[recruiterId]) {
