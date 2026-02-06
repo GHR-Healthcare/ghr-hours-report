@@ -307,13 +307,13 @@ app.http('calculateWeekly', {
         const weekEnd = formatDate(weekSaturday as Date);
         
         context.log(`Processing ${weekName}: ${weekStart} to ${weekEnd}`);
-        
+
         // Query orders directly from database - much faster and more accurate
-        const { hoursMap: hoursByRecruiter, orderCount, regionNames } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
-        
+        const { hoursMap: hoursByRecruiter, lunchMinutesMap, orderCount, regionNames } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
+
         // Collect all region names across all weeks
         regionNames.forEach(name => allRegionNames.add(name));
-        
+
         context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
         results[weekName].totalOrders = orderCount;
         
@@ -355,18 +355,20 @@ app.http('calculateWeekly', {
         for (const [userId, hours] of hoursByRecruiter) {
           if (activeUserIds.has(userId)) {
             const roundedHours = Math.round(hours * 100) / 100;
+            const lunchMinutes = Math.round(lunchMinutesMap.get(userId) || 0);
             totalHoursForWeek += roundedHours;
-            
+
             recruiterDetails.push({
               userId,
               name: recruiterNames.get(userId) || `User ${userId}`,
-              hours: roundedHours
+              hours: roundedHours,
+              lunchMinutes: lunchMinutes
             });
-            
+
             await databaseService.upsertWeeklySnapshot(
-              userId, 
-              weekStart, 
-              snapshotDayOfWeek, 
+              userId,
+              weekStart,
+              snapshotDayOfWeek,
               roundedHours
             );
           }
@@ -1004,9 +1006,10 @@ app.http('adminPortal', {
         const week = weekData;
         if (week.recruiters && week.recruiters.length > 0) {
           html += '<h4 style="margin-top: 20px;">' + weekName + ' - Hours by Recruiter</h4>';
-          html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th></tr></thead><tbody>';
+          html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th><th>Lunch Minutes Deducted</th></tr></thead><tbody>';
           for (const r of week.recruiters) {
-            html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() + '</td></tr>';
+            html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() +
+              '</td><td>' + (r.lunchMinutes || 0).toLocaleString() + ' min</td></tr>';
           }
           html += '</tbody></table>';
         }

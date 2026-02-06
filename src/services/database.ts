@@ -549,19 +549,20 @@ class DatabaseService {
 
   // Get hours directly from ghr_ctmsync orders table
   // This bypasses the ClearConnect API and queries the source data directly
-  // Returns { hoursMap, orderCount, regionNames }
-  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, orderCount: number, regionNames: string[] }> {
+  // Returns { hoursMap, lunchMinutesMap, orderCount, regionNames }
+  async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, lunchMinutesMap: Map<number, number>, orderCount: number, regionNames: string[] }> {
     const pool = await this.getCtmsyncPool();
-    
-    // Get hours and order counts by staffer
+
+    // Get hours and order counts by staffer, with lunch minutes subtracted
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
-        SELECT 
+        SELECT
           u.userid,
           COUNT(*) AS order_count,
-          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
+          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(o.lesslunchmin, 0)) / 60.0 AS total_hours,
+          SUM(ISNULL(o.lesslunchmin, 0)) / 60.0 AS lunch_hours
         FROM dbo.orders o
         INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
         INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
@@ -569,14 +570,16 @@ class DatabaseService {
           AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
         GROUP BY u.userid
       `);
-    
+
     const hoursMap = new Map<number, number>();
+    const lunchMinutesMap = new Map<number, number>();
     let totalOrders = 0;
     for (const row of result.recordset) {
       hoursMap.set(row.userid, row.total_hours || 0);
+      lunchMinutesMap.set(row.userid, (row.lunch_hours || 0) * 60); // Convert back to minutes for display
       totalOrders += row.order_count || 0;
     }
-    
+
     // Get distinct region names from filled orders
     const regionsResult = await pool.request()
       .input('weekStart', sql.Date, weekStart)
@@ -591,10 +594,10 @@ class DatabaseService {
           AND r.regionname IS NOT NULL
         ORDER BY r.regionname
       `);
-    
+
     const regionNames = regionsResult.recordset.map((row: any) => row.regionname);
-    
-    return { hoursMap, orderCount: totalOrders, regionNames };
+
+    return { hoursMap, lunchMinutesMap, orderCount: totalOrders, regionNames };
   }
 
   // Get user name from ctmsync users table
