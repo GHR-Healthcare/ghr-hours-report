@@ -1040,10 +1040,18 @@ app.http('adminPortal', {
       const results = document.getElementById('calc-results');
       btn.textContent = 'Running...';
       btn.disabled = true;
-      results.innerHTML = '<p>Calculating weekly hours... this may take a minute.</p>';
-      
+      results.innerHTML = '<p>Calculating weekly hours... this may take several minutes. Please wait...</p>';
+
       try {
-        const res = await fetch(API_BASE + '/calculate/weekly');
+        // Increase timeout to 10 minutes for large datasets
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutes
+
+        const res = await fetch(API_BASE + '/calculate/weekly', {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
         const data = await res.json();
         
         if (res.ok) {

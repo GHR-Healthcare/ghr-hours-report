@@ -24,18 +24,20 @@ class DatabaseService {
       database: process.env.SQL_DATABASE || 'hours_report',
       user: process.env.SQL_USER || '',
       password: process.env.SQL_PASSWORD || '',
+      requestTimeout: 600000, // 10 minutes for large queries
       options: {
         encrypt: true,
         trustServerCertificate: false
       }
     };
-    
+
     // ghr_ctmsync database (read-only mirror of ATS)
     this.ctmsyncConfig = {
       server: process.env.SQL_SERVER || '',
       database: process.env.SQL_DATABASE_CTMSYNC || 'ghr_ctmsync',
       user: process.env.SQL_USER || '',
       password: process.env.SQL_PASSWORD || '',
+      requestTimeout: 600000, // 10 minutes for large queries
       options: {
         encrypt: true,
         trustServerCertificate: false
@@ -563,12 +565,12 @@ class DatabaseService {
         SELECT
           u.userid,
           COUNT(*) AS order_count,
-          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(pc.DefaultLunchMins, 0)) / 60.0 AS total_hours,
-          SUM(ISNULL(pc.DefaultLunchMins, 0)) / 60.0 AS lunch_hours
+          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(pc.defaultlunchmins, 0)) / 60.0 AS total_hours,
+          SUM(ISNULL(pc.defaultlunchmins, 0)) / 60.0 AS lunch_hours
         FROM dbo.orders o
         INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
         INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
-        INNER JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
         WHERE o.status = 'filled'
           AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
         GROUP BY u.userid
