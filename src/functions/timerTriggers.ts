@@ -203,14 +203,15 @@ app.timer('nightlySnapshot', {
 // Uses weekOffset of -1 to shift perspective back one week
 // =============================================================================
 app.timer('mondayWeeklyRecap', {
-  schedule: '0 0 8 * * 1', // 8:00 AM EST Monday
+  schedule: '0 15 8 * * 1', // 8:15 AM EST Monday (after 8 AM daily calc finishes)
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('=== MONDAY WEEKLY RECAP TRIGGERED (8:00 AM EST) ===');
-    
+    context.log('=== MONDAY WEEKLY RECAP TRIGGERED (8:15 AM EST) ===');
+
     try {
-      // No recalculation needed - use the snapshots saved throughout last week
-      // Saturday's nightly snapshot already captured the final totals
-      
+      // The 8 AM daily report calculates fresh data including the current week.
+      // This recap runs 15 min later so that data is available as "Next Week"
+      // when viewed from the offset -1 perspective.
+
       // Send the weekly recap email with week offset -1
       // This shifts the perspective so "This Week" shows the completed week
       await sendReportEmail(context, 'Weekly Hours Recap - Previous Week Final', -1);
