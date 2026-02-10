@@ -8,7 +8,7 @@ dist/
 local.settings.json
 
 # IDE
-.vscode/
+
 .idea/
 
 # OS
