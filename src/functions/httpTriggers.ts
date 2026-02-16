@@ -613,6 +613,7 @@ app.http('adminPortal', {
       <button class="tab" data-tab="email">Test Email</button>
       <button class="tab" data-tab="preview">Preview Report</button>
       <button class="tab" data-tab="calculate">Recalculate</button>
+      <button class="tab" data-tab="stack-ranking">Stack Ranking</button>
     </div>
 
     <div id="alert"></div>
@@ -699,6 +700,23 @@ app.http('adminPortal', {
       
       <div id="calc-results" style="margin-top: 1.5rem;"></div>
     </div>
+
+    <!-- Stack Ranking Panel -->
+    <div class="panel" id="stack-ranking-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2>Stack Ranking</h2>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+          <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+          <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
+          <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
+        </div>
+      </div>
+      <div id="sr-results"></div>
+      <iframe id="sr-preview-frame" class="preview-frame" style="display:none;"></iframe>
+    </div>
   </div>
 
   <!-- Add/Edit Recruiter Modal -->
@@ -761,6 +779,9 @@ app.http('adminPortal', {
         
         if (tab.dataset.tab === 'preview') {
           loadPreview(true);
+        }
+        if (tab.dataset.tab === 'stack-ranking') {
+          getStackRankingDates();
         }
       });
     });
@@ -1071,6 +1092,92 @@ app.http('adminPortal', {
         btn.textContent = 'Run Weekly Calculation';
         btn.disabled = false;
       }
+    }
+
+    // Stack Ranking
+    function getStackRankingDates() {
+      let weekStart = document.getElementById('sr-week-start').value;
+      let weekEnd = document.getElementById('sr-week-end').value;
+      if (!weekStart || !weekEnd) {
+        // Default to last week
+        const now = new Date();
+        const dayOfWeek = now.getDay();
+        const thisSun = new Date(now);
+        thisSun.setDate(now.getDate() - dayOfWeek);
+        const lastSun = new Date(thisSun);
+        lastSun.setDate(thisSun.getDate() - 7);
+        const lastSat = new Date(lastSun);
+        lastSat.setDate(lastSun.getDate() + 6);
+        weekStart = lastSun.toISOString().split('T')[0];
+        weekEnd = lastSat.toISOString().split('T')[0];
+        document.getElementById('sr-week-start').value = weekStart;
+        document.getElementById('sr-week-end').value = weekEnd;
+      }
+      return { weekStart, weekEnd };
+    }
+
+    async function loadStackRanking() {
+      const { weekStart, weekEnd } = getStackRankingDates();
+      const results = document.getElementById('sr-results');
+      document.getElementById('sr-preview-frame').style.display = 'none';
+      results.innerHTML = '<p>Calculating stack ranking...</p>';
+
+      try {
+        const res = await fetch(API_BASE + '/stack-ranking?weekStart=' + weekStart + '&weekEnd=' + weekEnd);
+        const data = await res.json();
+
+        if (data.error) {
+          results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>';
+          return;
+        }
+
+        const rows = data.rows || [];
+        const totals = data.totals || {};
+        const fmtMoney = (n) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmtPct = (n) => (n || 0).toFixed(2) + '%';
+
+        let html = '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' recruiters ranked for ' + weekStart + ' to ' + weekEnd + '</p>';
+        html += '<table><thead><tr>' +
+          '<th>Rank</th><th>Recruiter</th><th>Division</th><th>HC</th>' +
+          '<th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior Rank</th>' +
+          '</tr></thead><tbody>';
+
+        rows.forEach(function(r) {
+          let change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
+          let prior = r.prior_week_rank !== null ? r.prior_week_rank : 'NEW';
+          html += '<tr>' +
+            '<td>' + r.rank + '</td>' +
+            '<td>' + r.recruiter_name + '</td>' +
+            '<td>' + r.division_name + '</td>' +
+            '<td style="text-align:right">' + r.head_count + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
+            '<td style="text-align:center">' + change + '</td>' +
+            '<td style="text-align:center">' + prior + '</td>' +
+            '</tr>';
+        });
+
+        html += '<tr style="font-weight:bold;background:#f0f0f0;">' +
+          '<td></td><td>TOTALS</td><td></td>' +
+          '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
+          '<td style="text-align:right">' + fmtPct(totals.overall_gp_pct) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td>' +
+          '<td></td><td></td></tr>';
+
+        html += '</tbody></table>';
+        results.innerHTML = html;
+      } catch (err) {
+        results.innerHTML = '<p class="alert alert-error">Error: ' + err.message + '</p>';
+      }
+    }
+
+    function previewStackRankingHtml() {
+      const { weekStart, weekEnd } = getStackRankingDates();
+      const frame = document.getElementById('sr-preview-frame');
+      frame.style.display = 'block';
+      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + weekStart + '&weekEnd=' + weekEnd;
     }
 
     // Initialize
