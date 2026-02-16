@@ -132,3 +132,56 @@ export interface UpdateRecruiterRequest {
   display_order?: number;
   is_active?: boolean;
 }
+
+// Stack Ranking Types
+
+export type AtsSystem = 'symplr' | 'bullhorn';
+
+export interface DivisionAtsMapping {
+  division_id: number;
+  ats_system: AtsSystem;
+}
+
+export interface PlacementData {
+  recruiter_user_id: number;
+  recruiter_name: string;
+  division_id: number;
+  division_name: string;
+  head_count: number;
+  total_bill_amount: number;
+  total_pay_amount: number;
+}
+
+export interface StackRankingRow {
+  rank: number;
+  recruiter_name: string;
+  recruiter_user_id: number;
+  division_name: string;
+  head_count: number;
+  gross_margin_dollars: number;
+  gross_profit_pct: number;
+  revenue: number;
+  prior_week_rank: number | null;
+  rank_change: number | null;
+}
+
+export interface StackRankingSnapshot {
+  snapshot_id: number;
+  week_start: string;
+  recruiter_user_id: number;
+  recruiter_name: string;
+  division_name: string;
+  rank: number;
+  head_count: number;
+  gross_margin_dollars: number;
+  gross_profit_pct: number;
+  revenue: number;
+  created_at: Date;
+}
+
+export interface StackRankingTotals {
+  total_head_count: number;
+  total_gm_dollars: number;
+  total_revenue: number;
+  overall_gp_pct: number;
+}

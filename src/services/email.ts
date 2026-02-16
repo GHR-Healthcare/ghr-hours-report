@@ -1,4 +1,4 @@
-import { ReportRow, WeeklyTotals } from '../types';
+import { ReportRow, WeeklyTotals, StackRankingRow, StackRankingTotals } from '../types';
 
 class EmailService {
   private tenantId: string;
@@ -338,6 +338,114 @@ class EmailService {
     }
 
     html += `
+      </body>
+      </html>
+    `;
+
+    return html;
+  }
+  generateStackRankingHtml(
+    rows: StackRankingRow[],
+    totals: StackRankingTotals,
+    weekStart: string,
+    weekEnd: string
+  ): string {
+    const fmtDate = (d: string) => {
+      const [y, m, day] = d.split('-');
+      return `${m}.${day}.${y}`;
+    };
+
+    const fmtMoney = (n: number) =>
+      '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const fmtPct = (n: number) => n.toFixed(2) + '%';
+
+    const headerBg = '#4472C4';
+    const headerStyle = `border: 1px solid #999; padding: 8px 12px; background-color: ${headerBg}; color: #fff; font-weight: bold; text-align: center;`;
+    const yellowRow = '#FFF2CC';
+    const greenRow = '#E2EFDA';
+    const totalsBg = '#D9E2F3';
+
+    let html = `
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; text-align: center; }
+          table { border-collapse: collapse; margin: 0 auto 20px auto; }
+          th, td { border: 1px solid #999; padding: 8px 12px; }
+          h1 { color: #333; text-align: center; font-size: 18px; }
+        </style>
+      </head>
+      <body>
+        <h1>GHR ALL COMPANY PERFORMANCE RANKING</h1>
+        <h2 style="color: #666; font-size: 14px;">Week of ${fmtDate(weekStart)} - ${fmtDate(weekEnd)}</h2>
+        <table>
+          <tr>
+            <th style="${headerStyle}">Rank</th>
+            <th style="${headerStyle}">Recruiter Name</th>
+            <th style="${headerStyle}">Division</th>
+            <th style="${headerStyle}">HC</th>
+            <th style="${headerStyle}">GM$</th>
+            <th style="${headerStyle}">GP%</th>
+            <th style="${headerStyle}">Revenue</th>
+            <th style="${headerStyle}">Change</th>
+            <th style="${headerStyle}">Prior Week Rank</th>
+          </tr>
+    `;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const bg = i % 2 === 0 ? yellowRow : greenRow;
+      const cellStyle = `border: 1px solid #999; padding: 8px 12px; background-color: ${bg};`;
+      const cellRight = `${cellStyle} text-align: right;`;
+      const cellCenter = `${cellStyle} text-align: center;`;
+
+      let changeDisplay: string;
+      if (row.rank_change === null) {
+        changeDisplay = 'NEW';
+      } else if (row.rank_change > 0) {
+        changeDisplay = `+${row.rank_change}`;
+      } else if (row.rank_change < 0) {
+        changeDisplay = `${row.rank_change}`;
+      } else {
+        changeDisplay = '-';
+      }
+
+      const priorRankDisplay = row.prior_week_rank !== null ? String(row.prior_week_rank) : 'NEW';
+
+      html += `
+          <tr>
+            <td style="${cellCenter}">${row.rank}</td>
+            <td style="${cellStyle}">${row.recruiter_name}</td>
+            <td style="${cellStyle}">${row.division_name}</td>
+            <td style="${cellRight}">${row.head_count}</td>
+            <td style="${cellRight}">${fmtMoney(row.gross_margin_dollars)}</td>
+            <td style="${cellRight}">${fmtPct(row.gross_profit_pct)}</td>
+            <td style="${cellRight}">${fmtMoney(row.revenue)}</td>
+            <td style="${cellCenter}">${changeDisplay}</td>
+            <td style="${cellCenter}">${priorRankDisplay}</td>
+          </tr>
+      `;
+    }
+
+    // Totals row
+    const totalsStyle = `border: 1px solid #999; padding: 8px 12px; background-color: ${totalsBg}; font-weight: bold;`;
+    const totalsRight = `${totalsStyle} text-align: right;`;
+    const totalsCenter = `${totalsStyle} text-align: center;`;
+
+    html += `
+          <tr>
+            <td style="${totalsCenter}"></td>
+            <td style="${totalsStyle}">TOTALS</td>
+            <td style="${totalsStyle}"></td>
+            <td style="${totalsRight}">${totals.total_head_count}</td>
+            <td style="${totalsRight}">${fmtMoney(totals.total_gm_dollars)}</td>
+            <td style="${totalsRight}">${fmtPct(totals.overall_gp_pct)}</td>
+            <td style="${totalsRight}">${fmtMoney(totals.total_revenue)}</td>
+            <td style="${totalsCenter}"></td>
+            <td style="${totalsCenter}"></td>
+          </tr>
+        </table>
       </body>
       </html>
     `;

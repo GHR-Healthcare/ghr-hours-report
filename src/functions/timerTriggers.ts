@@ -1,6 +1,7 @@
 import { app, InvocationContext, Timer } from '@azure/functions';
 import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
+import { stackRankingService } from '../services/stackRanking';
 
 // Helper function to get week boundaries
 function getWeekInfo(forDate?: Date) {
@@ -281,6 +282,41 @@ app.timer('dailyReport5pm', {
 });
 
 // =============================================================================
+// WEEKLY STACK RANKING - Monday 8:30 AM EST
+// Calculates last week's stack ranking and emails to separate recipient list
+// Runs after the 8:15 AM recap so all data is fresh
+// =============================================================================
+app.timer('weeklyStackRanking', {
+  schedule: '0 30 8 * * 1', // 8:30 AM EST Monday
+  handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
+    context.log('=== WEEKLY STACK RANKING TRIGGERED (8:30 AM EST Monday) ===');
+
+    try {
+      const { weekStart, weekEnd } = stackRankingService.getLastWeekBoundaries();
+      context.log(`Calculating stack ranking for ${weekStart} to ${weekEnd}`);
+
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
+      context.log(`Stack ranking calculated: ${rows.length} recruiters ranked`);
+
+      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+
+      const recipients = (process.env.STACK_RANKING_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+
+      if (recipients.length === 0) {
+        context.warn('No stack ranking recipients configured. Set STACK_RANKING_RECIPIENTS environment variable.');
+        return;
+      }
+
+      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html);
+      context.log(`Stack ranking email sent to ${recipients.length} recipients`);
+    } catch (error) {
+      context.error('Error in weekly stack ranking:', error);
+      throw error;
+    }
+  }
+});
+
+// =============================================================================
 // NIGHTLY CLEANUP - 2:00 AM EST (07:00 UTC)
 // Removes old snapshot data to keep database clean
 // =============================================================================
@@ -292,6 +328,9 @@ app.timer('nightlyCleanup', {
     try {
       const deleted = await databaseService.cleanupOldSnapshots();
       context.log(`Cleanup complete: ${deleted} old snapshots removed`);
+
+      const stackDeleted = await databaseService.cleanupOldStackRankingSnapshots();
+      context.log(`Stack ranking cleanup: ${stackDeleted} old snapshots removed`);
     } catch (error) {
       context.error('Error in nightly cleanup:', error);
       throw error;

@@ -1,14 +1,19 @@
 import * as sql from 'mssql';
-import { 
-  Division, 
-  RecruiterConfig, 
-  IncludedRegion, 
+import {
+  Division,
+  RecruiterConfig,
+  IncludedRegion,
   ReportRow,
   WeeklyTotals,
   CreateRecruiterRequest,
   UpdateRecruiterRequest,
   CreateDivisionRequest,
-  UpdateDivisionRequest
+  UpdateDivisionRequest,
+  DivisionAtsMapping,
+  PlacementData,
+  StackRankingRow,
+  StackRankingSnapshot,
+  AtsSystem
 } from '../types';
 
 class DatabaseService {
@@ -690,6 +695,134 @@ class DatabaseService {
       fri: Math.round(dayTotals.fri * 100) / 100,
       sat: Math.round(dayTotals.sat * 100) / 100
     };
+  }
+
+  // ==========================================
+  // STACK RANKING
+  // ==========================================
+
+  async getDivisionAtsMappings(): Promise<DivisionAtsMapping[]> {
+    const pool = await this.getPool();
+    const result = await pool.request().query(
+      'SELECT division_id, ats_system FROM dbo.division_ats_mapping'
+    );
+    return result.recordset;
+  }
+
+  async getSymplrPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
+    const pool = await this.getCtmsyncPool();
+
+    // Get recruiter-to-division mapping from hours_report DB
+    const recruiters = await this.getRecruiters(false);
+    const divisions = await this.getDivisions(false);
+    const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
+    const recruiterDivisionMap = new Map(
+      recruiters.map(r => [r.user_id, {
+        division_id: r.division_id,
+        division_name: divisionMap.get(r.division_id) || 'Unknown'
+      }])
+    );
+
+    // TODO: Verify column names for bill rate and pay rate in ghr_ctmsync
+    // Placeholder columns: o.billrate, o.payrate - update once confirmed
+    const result = await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .input('weekEnd', sql.Date, weekEnd)
+      .query(`
+        SELECT
+          u.userid AS recruiter_user_id,
+          u.firstname + ' ' + u.lastname AS recruiter_name,
+          COUNT(DISTINCT o.filledby) AS head_count,
+          SUM(
+            DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0
+            * ISNULL(o.billrate, 0)
+          ) AS total_bill_amount,
+          SUM(
+            DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0
+            * ISNULL(o.payrate, 0)
+          ) AS total_pay_amount
+        FROM dbo.orders o
+        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
+        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
+        WHERE o.status = 'filled'
+          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        GROUP BY u.userid, u.firstname, u.lastname
+      `);
+
+    return result.recordset.map((row: any) => {
+      const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
+      return {
+        recruiter_user_id: row.recruiter_user_id,
+        recruiter_name: row.recruiter_name,
+        division_id: divInfo?.division_id || 0,
+        division_name: divInfo?.division_name || 'Unknown',
+        head_count: row.head_count || 0,
+        total_bill_amount: row.total_bill_amount || 0,
+        total_pay_amount: row.total_pay_amount || 0,
+      };
+    });
+  }
+
+  async getBullhornPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
+    // Phase 2: Implement when Bullhorn mirror connection details are available
+    console.warn('Bullhorn placement data not yet implemented');
+    return [];
+  }
+
+  async saveStackRankingSnapshot(weekStart: string, rows: StackRankingRow[]): Promise<void> {
+    const pool = await this.getPool();
+
+    // Delete existing snapshot for this week (idempotent re-runs)
+    await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .query('DELETE FROM dbo.stack_ranking_snapshots WHERE week_start = @weekStart');
+
+    // Insert new snapshot rows in batches
+    const batchSize = 10;
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, i + batchSize);
+      await Promise.all(batch.map(row =>
+        pool.request()
+          .input('weekStart', sql.Date, weekStart)
+          .input('userId', sql.Int, row.recruiter_user_id)
+          .input('name', sql.NVarChar(200), row.recruiter_name)
+          .input('division', sql.NVarChar(100), row.division_name)
+          .input('rank', sql.Int, row.rank)
+          .input('hc', sql.Int, row.head_count)
+          .input('gm', sql.Decimal(12, 2), row.gross_margin_dollars)
+          .input('gp', sql.Decimal(6, 2), row.gross_profit_pct)
+          .input('revenue', sql.Decimal(12, 2), row.revenue)
+          .query(`
+            INSERT INTO dbo.stack_ranking_snapshots
+              (week_start, recruiter_user_id, recruiter_name, division_name,
+               rank, head_count, gross_margin_dollars, gross_profit_pct, revenue)
+            VALUES
+              (@weekStart, @userId, @name, @division,
+               @rank, @hc, @gm, @gp, @revenue)
+          `)
+      ));
+    }
+  }
+
+  async getPriorWeekSnapshot(priorWeekStart: string): Promise<StackRankingSnapshot[]> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('weekStart', sql.Date, priorWeekStart)
+      .query(`
+        SELECT * FROM dbo.stack_ranking_snapshots
+        WHERE week_start = @weekStart
+        ORDER BY rank
+      `);
+    return result.recordset;
+  }
+
+  async cleanupOldStackRankingSnapshots(): Promise<number> {
+    const pool = await this.getPool();
+    const result = await pool.request().query(`
+      DELETE FROM dbo.stack_ranking_snapshots
+      WHERE week_start < DATEADD(week, -12, GETDATE())
+    `);
+    return result.rowsAffected[0] || 0;
   }
 }
 

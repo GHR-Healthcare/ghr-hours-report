@@ -3,6 +3,7 @@ import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
 import { clearConnectService } from '../services/clearconnect';
 import { calculateAllHours } from '../utils/hours-calculator';
+import { stackRankingService } from '../services/stackRanking';
 
 // DIVISIONS
 
@@ -1251,6 +1252,128 @@ app.http('debugClearConnect', {
   }
 });
 
+// STACK RANKING
+
+app.http('getStackRanking', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'stack-ranking',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const weekStartParam = request.query.get('weekStart');
+      const weekEndParam = request.query.get('weekEnd');
+
+      let weekStart: string;
+      let weekEnd: string;
+
+      if (weekStartParam && weekEndParam) {
+        weekStart = weekStartParam;
+        weekEnd = weekEndParam;
+      } else {
+        const boundaries = stackRankingService.getLastWeekBoundaries();
+        weekStart = boundaries.weekStart;
+        weekEnd = boundaries.weekEnd;
+      }
+
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
+      return { jsonBody: { weekStart, weekEnd, rows, totals } };
+    } catch (error) {
+      context.error('Error getting stack ranking:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get stack ranking' } };
+    }
+  }
+});
+
+app.http('getStackRankingHtml', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'stack-ranking/html',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const weekStartParam = request.query.get('weekStart');
+      const weekEndParam = request.query.get('weekEnd');
+
+      let weekStart: string;
+      let weekEnd: string;
+
+      if (weekStartParam && weekEndParam) {
+        weekStart = weekStartParam;
+        weekEnd = weekEndParam;
+      } else {
+        const boundaries = stackRankingService.getLastWeekBoundaries();
+        weekStart = boundaries.weekStart;
+        weekEnd = boundaries.weekEnd;
+      }
+
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
+      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+
+      return {
+        headers: { 'Content-Type': 'text/html' },
+        body: html,
+      };
+    } catch (error) {
+      context.error('Error getting stack ranking HTML:', error);
+      return { status: 500, jsonBody: { error: 'Failed to generate stack ranking HTML' } };
+    }
+  }
+});
+
+app.http('sendStackRankingEmail', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'stack-ranking/send-email',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+      const weekStartParam = body?.weekStart;
+      const weekEndParam = body?.weekEnd;
+      const testRecipient = body?.recipient;
+
+      let weekStart: string;
+      let weekEnd: string;
+
+      if (weekStartParam && weekEndParam) {
+        weekStart = weekStartParam;
+        weekEnd = weekEndParam;
+      } else {
+        const boundaries = stackRankingService.getLastWeekBoundaries();
+        weekStart = boundaries.weekStart;
+        weekEnd = boundaries.weekEnd;
+      }
+
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
+      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+
+      let recipients: string[];
+      if (testRecipient) {
+        recipients = [testRecipient];
+      } else {
+        recipients = (process.env.STACK_RANKING_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+      }
+
+      if (recipients.length === 0) {
+        return { status: 400, jsonBody: { error: 'No recipients configured. Set STACK_RANKING_RECIPIENTS or provide a recipient in the request body.' } };
+      }
+
+      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html);
+
+      return {
+        jsonBody: {
+          success: true,
+          weekStart,
+          weekEnd,
+          recipientCount: recipients.length,
+          recruiterCount: rows.length,
+        },
+      };
+    } catch (error) {
+      context.error('Error sending stack ranking email:', error);
+      return { status: 500, jsonBody: { error: 'Failed to send stack ranking email' } };
+    }
+  }
+});
+
 // HEALTH CHECK
 
 app.http('healthCheck', {
@@ -1258,11 +1381,11 @@ app.http('healthCheck', {
   authLevel: 'anonymous',
   route: 'health',
   handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
-    return { 
-      jsonBody: { 
-        status: 'healthy', 
-        timestamp: new Date().toISOString() 
-      } 
+    return {
+      jsonBody: {
+        status: 'healthy',
+        timestamp: new Date().toISOString()
+      }
     };
   }
 });

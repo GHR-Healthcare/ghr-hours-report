@@ -4,4 +4,5 @@ import './functions/httpTriggers';
 export { clearConnectService } from './services/clearconnect';
 export { databaseService } from './services/database';
 export { emailService } from './services/email';
+export { stackRankingService } from './services/stackRanking';
 export { calculateAllHours, calculateHoursForDate } from './utils/hours-calculator';
