@@ -262,11 +262,16 @@ class StackRankingService {
         : Promise.resolve([] as PlacementData[]),
     ]);
 
+    // Auto-discover new users from ATS data (same as calculateRanking)
+    const checkedAtsIds = new Set<string>();
+    await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
+    await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+
     // Filter by mapped divisions
     const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
     const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
 
-    // Build ATS-to-config maps for resolving IDs
+    // Build ATS-to-config maps for resolving IDs (after discovery so new users are included)
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
       databaseService.getAtsIdToConfigMap('symplr'),
       databaseService.getAtsIdToConfigMap('bullhorn'),

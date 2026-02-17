@@ -1459,8 +1459,8 @@ app.http('adminPortal', {
             '<td style="color:#6b7280;font-size:0.85rem;">' + (c.description || '-') + '</td>' +
             '<td style="color:#6b7280;font-size:0.85rem;white-space:nowrap;">' + modifiedDate + '</td>' +
             '<td class="actions">' +
-              '<button class="btn btn-secondary" onclick="editSetting(\'' + c.config_key + '\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button> ' +
-              '<button class="btn btn-danger" onclick="deleteSetting(\'' + c.config_key + '\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Delete</button>' +
+              '<button class="btn btn-secondary" onclick="editSetting(\\'' + c.config_key + '\\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button> ' +
+              '<button class="btn btn-danger" onclick="deleteSetting(\\'' + c.config_key + '\\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Delete</button>' +
             '</td></tr>';
         });
         tbody.innerHTML = html;
