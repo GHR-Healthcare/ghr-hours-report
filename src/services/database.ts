@@ -19,8 +19,10 @@ import {
 class DatabaseService {
   private pool: sql.ConnectionPool | null = null;
   private ctmsyncPool: sql.ConnectionPool | null = null;
+  private bullhornPool: sql.ConnectionPool | null = null;
   private config: sql.config;
   private ctmsyncConfig: sql.config;
+  private bullhornConfig: sql.config;
 
   constructor() {
     // Main hours_report database
@@ -48,6 +50,20 @@ class DatabaseService {
         trustServerCertificate: false
       }
     };
+
+    // Bullhorn mirror database (separate server)
+    this.bullhornConfig = {
+      server: process.env.BULLHORN_SQL_SERVER || '',
+      database: process.env.BULLHORN_SQL_DATABASE || 'DM_GeneralHealthCare_24187_EMS',
+      user: process.env.BULLHORN_SQL_USER || '',
+      password: process.env.BULLHORN_SQL_PASSWORD || '',
+      port: parseInt(process.env.BULLHORN_SQL_PORT || '1433'),
+      requestTimeout: 600000,
+      options: {
+        encrypt: true,
+        trustServerCertificate: true
+      }
+    };
   }
 
   async getPool(): Promise<sql.ConnectionPool> {
@@ -64,6 +80,13 @@ class DatabaseService {
     return this.ctmsyncPool;
   }
 
+  async getBullhornPool(): Promise<sql.ConnectionPool> {
+    if (!this.bullhornPool) {
+      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
+    }
+    return this.bullhornPool;
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.close();
@@ -72,6 +95,10 @@ class DatabaseService {
     if (this.ctmsyncPool) {
       await this.ctmsyncPool.close();
       this.ctmsyncPool = null;
+    }
+    if (this.bullhornPool) {
+      await this.bullhornPool.close();
+      this.bullhornPool = null;
     }
   }
 
@@ -723,8 +750,8 @@ class DatabaseService {
       }])
     );
 
-    // TODO: Verify column names for bill rate and pay rate in ghr_ctmsync
-    // Placeholder columns: o.billrate, o.payrate - update once confirmed
+    // Use pre-computed totalbillamount and totalpayamount from orders
+    // These already include all rate tiers (regular, OT, holiday, double time, extras)
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
@@ -733,14 +760,8 @@ class DatabaseService {
           u.userid AS recruiter_user_id,
           u.firstname + ' ' + u.lastname AS recruiter_name,
           COUNT(DISTINCT o.filledby) AS head_count,
-          SUM(
-            DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0
-            * ISNULL(o.billrate, 0)
-          ) AS total_bill_amount,
-          SUM(
-            DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0
-            * ISNULL(o.payrate, 0)
-          ) AS total_pay_amount
+          SUM(ISNULL(o.totalbillamount, 0)) AS total_bill_amount,
+          SUM(ISNULL(o.totalpayamount, 0)) AS total_pay_amount
         FROM dbo.orders o
         INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
         INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
@@ -764,9 +785,85 @@ class DatabaseService {
   }
 
   async getBullhornPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
-    // Phase 2: Implement when Bullhorn mirror connection details are available
-    console.warn('Bullhorn placement data not yet implemented');
-    return [];
+    if (!process.env.BULLHORN_SQL_SERVER) {
+      console.warn('Bullhorn connection not configured, skipping');
+      return [];
+    }
+
+    const pool = await this.getBullhornPool();
+
+    // Get recruiter-to-division mapping from hours_report DB
+    const recruiters = await this.getRecruiters(false);
+    const divisions = await this.getDivisions(false);
+    const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
+    const recruiterDivisionMap = new Map(
+      recruiters.map(r => [r.user_id, {
+        division_id: r.division_id,
+        division_name: divisionMap.get(r.division_id) || 'Unknown'
+      }])
+    );
+
+    // Query placements active during the week
+    // Calculate weekday overlap and multiply by hoursPerDay * rates
+    const result = await pool.request()
+      .input('weekStart', sql.Date, weekStart)
+      .input('weekEnd', sql.Date, weekEnd)
+      .query(`
+        WITH ActivePlacements AS (
+          SELECT
+            p.ownerID,
+            p.candidateID,
+            p.clientBillRate,
+            p.payRate,
+            p.hoursPerDay,
+            -- Calculate overlap start/end with the query week
+            CASE WHEN p.dateBegin > @weekStart THEN CAST(p.dateBegin AS DATE) ELSE @weekStart END AS overlap_start,
+            CASE WHEN ISNULL(p.dateEnd, @weekEnd) < @weekEnd THEN CAST(p.dateEnd AS DATE) ELSE @weekEnd END AS overlap_end
+          FROM dbo.Placement p
+          WHERE p.dateBegin <= @weekEnd
+            AND ISNULL(p.dateEnd, @weekEnd) >= @weekStart
+            AND p.status IN ('Started', 'Approved', 'Completed', 'Cleared')
+        ),
+        PlacementDays AS (
+          SELECT
+            ownerID,
+            candidateID,
+            clientBillRate,
+            payRate,
+            hoursPerDay,
+            -- Count weekdays in the overlap period
+            DATEDIFF(dd, overlap_start, overlap_end) + 1
+            - (DATEDIFF(wk, overlap_start, overlap_end) * 2)
+            - CASE WHEN DATEPART(dw, overlap_start) = 1 THEN 1 ELSE 0 END
+            - CASE WHEN DATEPART(dw, overlap_end) = 7 THEN 1 ELSE 0 END
+            AS weekdays
+          FROM ActivePlacements
+          WHERE overlap_start <= overlap_end
+        )
+        SELECT
+          pd.ownerID AS recruiter_user_id,
+          cu.firstName + ' ' + cu.lastName AS recruiter_name,
+          COUNT(DISTINCT pd.candidateID) AS head_count,
+          SUM(ISNULL(pd.clientBillRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_bill_amount,
+          SUM(ISNULL(pd.payRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_pay_amount
+        FROM PlacementDays pd
+        INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.userID
+        WHERE pd.weekdays > 0
+        GROUP BY pd.ownerID, cu.firstName, cu.lastName
+      `);
+
+    return result.recordset.map((row: any) => {
+      const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
+      return {
+        recruiter_user_id: row.recruiter_user_id,
+        recruiter_name: row.recruiter_name,
+        division_id: divInfo?.division_id || 0,
+        division_name: divInfo?.division_name || 'Unknown',
+        head_count: row.head_count || 0,
+        total_bill_amount: row.total_bill_amount || 0,
+        total_pay_amount: row.total_pay_amount || 0,
+      };
+    });
   }
 
   async saveStackRankingSnapshot(weekStart: string, rows: StackRankingRow[]): Promise<void> {
