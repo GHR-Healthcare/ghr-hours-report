@@ -195,11 +195,13 @@ class DatabaseService {
 
   async createRecruiter(data: CreateRecruiterRequest): Promise<RecruiterConfig> {
     // Redirect to user_config with on_hours_report = true
+    // Hours report data comes from Symplr/ClearConnect, so set symplr_user_id
     const userConfig = await this.createUserConfig({
       user_id: data.user_id,
       user_name: data.user_name,
       division_id: data.division_id,
       weekly_goal: data.weekly_goal,
+      symplr_user_id: data.user_id,
       on_hours_report: true,
       on_stack_ranking: false,
       display_order: data.display_order,
@@ -248,21 +250,26 @@ class DatabaseService {
 
   async createUserConfig(data: CreateUserConfigRequest): Promise<UserConfig> {
     const pool = await this.getPool();
+    const symplrId = data.symplr_user_id ?? null;
+    const bullhornId = data.bullhorn_user_id ?? null;
+    const canonicalUserId = data.user_id || symplrId || bullhornId || 0;
     const result = await pool.request()
-      .input('userId', sql.Int, data.user_id)
+      .input('userId', sql.Int, canonicalUserId)
       .input('userName', sql.NVarChar(200), data.user_name)
       .input('divisionId', sql.Int, data.division_id)
       .input('role', sql.VarChar(50), data.role || 'unknown')
       .input('title', sql.NVarChar(200), data.title || null)
       .input('atsSource', sql.VarChar(20), data.ats_source || null)
+      .input('symplrUserId', sql.Int, symplrId)
+      .input('bullhornUserId', sql.Int, bullhornId)
       .input('weeklyGoal', sql.Int, data.weekly_goal || 0)
       .input('onHoursReport', sql.Bit, data.on_hours_report ?? false)
       .input('onStackRanking', sql.Bit, data.on_stack_ranking ?? false)
       .input('displayOrder', sql.Int, data.display_order || 99)
       .query(`
-        INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, ats_source, weekly_goal, on_hours_report, on_stack_ranking, display_order)
+        INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, ats_source, symplr_user_id, bullhorn_user_id, weekly_goal, on_hours_report, on_stack_ranking, display_order)
         OUTPUT INSERTED.*
-        VALUES (@userId, @userName, @divisionId, @role, @title, @atsSource, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
+        VALUES (@userId, @userName, @divisionId, @role, @title, @atsSource, @symplrUserId, @bullhornUserId, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
       `);
     return result.recordset[0];
   }
@@ -308,9 +315,19 @@ class DatabaseService {
       updates.push('display_order = @displayOrder');
       request.input('displayOrder', sql.Int, data.display_order);
     }
+    if (data.symplr_user_id !== undefined) {
+      updates.push('symplr_user_id = @symplrUserId');
+      request.input('symplrUserId', sql.Int, data.symplr_user_id);
+    }
+    if (data.bullhorn_user_id !== undefined) {
+      updates.push('bullhorn_user_id = @bullhornUserId');
+      request.input('bullhornUserId', sql.Int, data.bullhorn_user_id);
+    }
 
     if (updates.length === 0) return null;
     updates.push('modified_at = GETDATE()');
+
+    const atsIdChanged = data.symplr_user_id !== undefined || data.bullhorn_user_id !== undefined;
 
     const result = await request.query(`
       UPDATE dbo.user_config
@@ -318,6 +335,23 @@ class DatabaseService {
       OUTPUT INSERTED.*
       WHERE config_id = @configId
     `);
+
+    // Recalculate canonical user_id when ATS IDs change
+    if (atsIdChanged && result.recordset[0]) {
+      await pool.request()
+        .input('configId', sql.Int, data.config_id)
+        .query(`
+          UPDATE dbo.user_config
+          SET user_id = COALESCE(symplr_user_id, bullhorn_user_id, user_id)
+          WHERE config_id = @configId
+        `);
+      // Re-fetch the updated row
+      const refreshed = await pool.request()
+        .input('configId', sql.Int, data.config_id)
+        .query('SELECT * FROM dbo.user_config WHERE config_id = @configId');
+      return refreshed.recordset[0] || null;
+    }
+
     return result.recordset[0] || null;
   }
 
@@ -327,6 +361,37 @@ class DatabaseService {
       .input('userId', sql.Int, userId)
       .query('SELECT 1 FROM dbo.user_config WHERE user_id = @userId');
     return result.recordset.length > 0;
+  }
+
+  async userConfigExistsByAtsId(atsSystem: AtsSystem, atsUserId: number): Promise<boolean> {
+    const pool = await this.getPool();
+    const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
+    const result = await pool.request()
+      .input('atsUserId', sql.Int, atsUserId)
+      .query(`SELECT 1 FROM dbo.user_config WHERE ${column} = @atsUserId`);
+    return result.recordset.length > 0;
+  }
+
+  async getUserConfigByAtsId(atsSystem: AtsSystem, atsUserId: number): Promise<UserConfig | null> {
+    const pool = await this.getPool();
+    const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
+    const result = await pool.request()
+      .input('atsUserId', sql.Int, atsUserId)
+      .query(`SELECT * FROM dbo.user_config WHERE ${column} = @atsUserId`);
+    return result.recordset[0] || null;
+  }
+
+  async getAtsIdToConfigMap(atsSystem: AtsSystem): Promise<Map<number, UserConfig>> {
+    const pool = await this.getPool();
+    const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
+    const result = await pool.request()
+      .query(`SELECT * FROM dbo.user_config WHERE ${column} IS NOT NULL AND is_active = 1`);
+    const map = new Map<number, UserConfig>();
+    for (const row of result.recordset) {
+      const atsId = atsSystem === 'symplr' ? row.symplr_user_id : row.bullhorn_user_id;
+      if (atsId != null) map.set(atsId, row);
+    }
+    return map;
   }
 
   // REGIONS
@@ -826,16 +891,17 @@ class DatabaseService {
   async getSymplrPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
     const pool = await this.getCtmsyncPool();
 
-    // Get recruiter-to-division mapping from hours_report DB
-    const recruiters = await this.getRecruiters(false);
+    // Get recruiter-to-division mapping from hours_report DB using symplr_user_id
+    const symplrMap = await this.getAtsIdToConfigMap('symplr');
     const divisions = await this.getDivisions(false);
     const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
-    const recruiterDivisionMap = new Map(
-      recruiters.map(r => [r.user_id, {
-        division_id: r.division_id,
-        division_name: divisionMap.get(r.division_id) || 'Unknown'
-      }])
-    );
+    const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
+    for (const [atsId, config] of symplrMap) {
+      recruiterDivisionMap.set(atsId, {
+        division_id: config.division_id,
+        division_name: divisionMap.get(config.division_id) || 'Unknown'
+      });
+    }
 
     // Use pre-computed totalbillamount and totalpayamount from orders
     // These already include all rate tiers (regular, OT, holiday, double time, extras)
@@ -879,16 +945,17 @@ class DatabaseService {
 
     const pool = await this.getBullhornPool();
 
-    // Get recruiter-to-division mapping from hours_report DB
-    const recruiters = await this.getRecruiters(false);
+    // Get recruiter-to-division mapping from hours_report DB using bullhorn_user_id
+    const bullhornMap = await this.getAtsIdToConfigMap('bullhorn');
     const divisions = await this.getDivisions(false);
     const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
-    const recruiterDivisionMap = new Map(
-      recruiters.map(r => [r.user_id, {
-        division_id: r.division_id,
-        division_name: divisionMap.get(r.division_id) || 'Unknown'
-      }])
-    );
+    const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
+    for (const [atsId, config] of bullhornMap) {
+      recruiterDivisionMap.set(atsId, {
+        division_id: config.division_id,
+        division_name: divisionMap.get(config.division_id) || 'Unknown'
+      });
+    }
 
     // Query placements active during the week
     // Calculate weekday overlap and multiply by hoursPerDay * rates

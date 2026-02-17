@@ -52,15 +52,17 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
         
         const hoursByRecruiter = await clearConnectService.calculateHoursForDate(dateStr, nextDateStr);
 
-        // Get existing recruiters to check who needs to be added
-        const existingRecruiters = await databaseService.getRecruiters(true);
-        const existingUserIds = new Set(existingRecruiters.map(r => r.user_id));
+        // Get existing user configs to check symplr_user_id for duplicates
+        const existingConfigs = await databaseService.getUserConfigs(true);
+        const existingSymplrIds = new Set(
+          existingConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
+        );
 
         for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
           const userId = parseInt(userIdStr);
-          
-          // Auto-add recruiter if not in database
-          if (!existingUserIds.has(userId)) {
+
+          // Auto-add recruiter if not in database (check symplr_user_id specifically)
+          if (!existingSymplrIds.has(userId)) {
             try {
               const user = await clearConnectService.getUser(userIdStr);
               const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${userId}`;
@@ -73,7 +75,7 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
                 display_order: 99
               });
               
-              existingUserIds.add(userId);
+              existingSymplrIds.add(userId);
               newRecruiters.push(userName);
               console.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
             } catch (addError) {

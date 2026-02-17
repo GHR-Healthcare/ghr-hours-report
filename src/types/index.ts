@@ -145,6 +145,8 @@ export interface UserConfig {
   role: RecruiterRole;
   title: string | null;
   ats_source: string | null;
+  symplr_user_id: number | null;
+  bullhorn_user_id: number | null;
   weekly_goal: number;
   on_hours_report: boolean;
   on_stack_ranking: boolean;
@@ -161,6 +163,8 @@ export interface CreateUserConfigRequest {
   role?: RecruiterRole;
   title?: string;
   ats_source?: string;
+  symplr_user_id?: number;
+  bullhorn_user_id?: number;
   weekly_goal?: number;
   on_hours_report?: boolean;
   on_stack_ranking?: boolean;
@@ -173,6 +177,8 @@ export interface UpdateUserConfigRequest {
   division_id?: number;
   role?: RecruiterRole;
   title?: string;
+  symplr_user_id?: number | null;
+  bullhorn_user_id?: number | null;
   weekly_goal?: number;
   on_hours_report?: boolean;
   on_stack_ranking?: boolean;

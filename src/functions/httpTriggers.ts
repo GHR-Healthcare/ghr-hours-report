@@ -283,11 +283,15 @@ app.http('calculateWeekly', {
       context.log(`Next week: ${formatDate(nextWeekSunday)} to ${formatDate(nextWeekSaturday)}`);
       context.log(`Snapshot day of week: ${snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek]})`);
       
-      // Get active, non-deleted recruiters only
-      const activeRecruiters = await databaseService.getRecruiters(false);
-      const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
-      const recruiterNames = new Map(activeRecruiters.map(r => [r.user_id, r.user_name]));
-      context.log(`Found ${activeUserIds.size} active recruiters`);
+      // Get active user configs and build Symplr ID set
+      const activeConfigs = await databaseService.getUserConfigs(false);
+      const activeHoursConfigs = activeConfigs.filter(c => c.on_hours_report);
+      const activeUserIds = new Set(activeHoursConfigs.map(r => r.user_id));
+      const recruiterNames = new Map(activeHoursConfigs.map(r => [r.user_id, r.user_name]));
+      const knownSymplrIds = new Set(
+        activeConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
+      );
+      context.log(`Found ${activeHoursConfigs.length} active hours report users`);
       
       const results: any = {
         lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
@@ -319,17 +323,15 @@ app.http('calculateWeekly', {
         context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
         results[weekName].totalOrders = orderCount;
         
-        // Check for new recruiters and auto-add them
-        for (const [userId, hours] of hoursByRecruiter) {
-          if (!activeUserIds.has(userId)) {
-            // Check if recruiter exists at all (including deleted/inactive)
-            const exists = await databaseService.recruiterExists(userId);
+        // Check for new recruiters and auto-add them (check symplr_user_id)
+        for (const [userId] of hoursByRecruiter) {
+          if (!knownSymplrIds.has(userId)) {
+            const exists = await databaseService.userConfigExistsByAtsId('symplr', userId);
             if (!exists) {
-              // Auto-add new recruiter - they'll be active by default
               try {
                 const userName = await databaseService.getUserNameFromCtmsync(userId);
                 const name = userName || `User ${userId}`;
-                
+
                 await databaseService.createRecruiter({
                   user_id: userId,
                   user_name: name,
@@ -338,11 +340,11 @@ app.http('calculateWeekly', {
                   display_order: 99
                 });
 
-                // Add to active set so their hours get counted
                 activeUserIds.add(userId);
+                knownSymplrIds.add(userId);
                 recruiterNames.set(userId, name);
                 newRecruiters.push({ userId, name });
-                context.log(`Auto-added recruiter: ${name} (ID: ${userId})`);
+                context.log(`Auto-added recruiter: ${name} (Symplr ID: ${userId})`);
               } catch (addError) {
                 context.log(`Error adding recruiter ${userId}: ${addError}`);
               }
@@ -764,7 +766,8 @@ app.http('adminPortal', {
         <thead>
           <tr>
             <th>Name</th>
-            <th>User ID</th>
+            <th>Symplr ID</th>
+            <th>Bullhorn ID</th>
             <th>Title</th>
             <th>Role</th>
             <th>Division</th>
@@ -835,9 +838,15 @@ app.http('adminPortal', {
           <label>Name</label>
           <input type="text" id="edit-name" required>
         </div>
-        <div class="form-group">
-          <label>User ID</label>
-          <input type="number" id="edit-user-id" required>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Symplr User ID</label>
+            <input type="number" id="edit-symplr-id" placeholder="Optional">
+          </div>
+          <div class="form-group">
+            <label>Bullhorn User ID</label>
+            <input type="number" id="edit-bullhorn-id" placeholder="Optional">
+          </div>
         </div>
         <div class="form-group">
           <label>Title</label>
@@ -1286,14 +1295,14 @@ app.http('adminPortal', {
         renderUsers();
       } catch (err) {
         document.getElementById('users-table').innerHTML =
-          '<tr><td colspan="10" class="alert alert-error">Error loading users: ' + err.message + '</td></tr>';
+          '<tr><td colspan="11" class="alert alert-error">Error loading users: ' + err.message + '</td></tr>';
       }
     }
 
     function renderUsers() {
       var tbody = document.getElementById('users-table');
       if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="10" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
         return;
       }
 
@@ -1313,7 +1322,8 @@ app.http('adminPortal', {
 
         html += '<tr>' +
           '<td><strong>' + u.user_name + '</strong></td>' +
-          '<td>' + u.user_id + '</td>' +
+          '<td>' + (u.symplr_user_id || '-') + '</td>' +
+          '<td>' + (u.bullhorn_user_id || '-') + '</td>' +
           '<td style="color:#6b7280;font-size:0.85rem;">' + (u.title || '-') + '</td>' +
           '<td>' + roleBadge + '</td>' +
           '<td>' + (divName ? divName.division_name : 'Div ' + u.division_id) + '</td>' +
@@ -1354,7 +1364,8 @@ app.http('adminPortal', {
       document.getElementById('modal-title').textContent = 'Edit User';
       document.getElementById('edit-config-id').value = u.config_id;
       document.getElementById('edit-name').value = u.user_name;
-      document.getElementById('edit-user-id').value = u.user_id;
+      document.getElementById('edit-symplr-id').value = u.symplr_user_id || '';
+      document.getElementById('edit-bullhorn-id').value = u.bullhorn_user_id || '';
       document.getElementById('edit-title').value = u.title || '';
       document.getElementById('edit-role').value = u.role || 'unknown';
       document.getElementById('edit-division').value = u.division_id;
@@ -1373,9 +1384,17 @@ app.http('adminPortal', {
     document.getElementById('user-form').addEventListener('submit', async function(e) {
       e.preventDefault();
       var configId = document.getElementById('edit-config-id').value;
+      var symplrVal = document.getElementById('edit-symplr-id').value;
+      var bullhornVal = document.getElementById('edit-bullhorn-id').value;
+      if (!symplrVal && !bullhornVal) {
+        alert('At least one ATS User ID (Symplr or Bullhorn) is required.');
+        return;
+      }
       var data = {
         user_name: document.getElementById('edit-name').value,
-        user_id: parseInt(document.getElementById('edit-user-id').value),
+        user_id: parseInt(symplrVal || bullhornVal),
+        symplr_user_id: symplrVal ? parseInt(symplrVal) : null,
+        bullhorn_user_id: bullhornVal ? parseInt(bullhornVal) : null,
         division_id: parseInt(document.getElementById('edit-division').value),
         role: document.getElementById('edit-role').value,
         title: document.getElementById('edit-title').value || null,

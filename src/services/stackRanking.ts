@@ -1,11 +1,13 @@
 import { databaseService } from './database';
 import {
+  AtsSystem,
   FinancialRow,
   FinancialTotals,
   PlacementData,
   RecruiterRole,
   StackRankingRow,
   StackRankingTotals,
+  UserConfig,
 } from '../types';
 
 class StackRankingService {
@@ -38,31 +40,29 @@ class StackRankingService {
   /**
    * Auto-discover and add new users found in ATS data.
    * Fetches their title, infers role, and adds to user_config.
+   * Uses ATS-specific ID columns to avoid cross-system ID collisions.
    */
   async autoDiscoverUsers(
-    allData: PlacementData[],
-    knownUserIds: Set<number>,
-    mappings: { division_id: number; ats_system: string }[]
+    placementData: PlacementData[],
+    atsSystem: AtsSystem,
+    checkedAtsIds: Set<string>,
   ): Promise<void> {
-    const atsMap = new Map(mappings.map(m => [m.division_id, m.ats_system]));
+    for (const d of placementData) {
+      const key = `${atsSystem}:${d.recruiter_user_id}`;
+      if (checkedAtsIds.has(key)) continue;
 
-    for (const d of allData) {
-      if (knownUserIds.has(d.recruiter_user_id)) continue;
-
-      const exists = await databaseService.userConfigExists(d.recruiter_user_id);
+      const exists = await databaseService.userConfigExistsByAtsId(atsSystem, d.recruiter_user_id);
       if (exists) {
-        knownUserIds.add(d.recruiter_user_id);
+        checkedAtsIds.add(key);
         continue;
       }
 
       try {
-        const atsSource = atsMap.get(d.division_id) || 'symplr';
         let title: string | null = null;
         let divisionId = d.division_id || 1;
 
-        if (atsSource === 'bullhorn') {
+        if (atsSystem === 'bullhorn') {
           title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
-          // Try to match Bullhorn department to an existing division
           const deptName = await databaseService.getUserDepartmentFromBullhorn(d.recruiter_user_id);
           if (deptName) {
             const matchedDivId = await databaseService.findDivisionByName(deptName);
@@ -80,15 +80,17 @@ class StackRankingService {
           division_id: divisionId,
           role,
           title: title || undefined,
-          ats_source: atsSource,
+          ats_source: atsSystem,
+          symplr_user_id: atsSystem === 'symplr' ? d.recruiter_user_id : undefined,
+          bullhorn_user_id: atsSystem === 'bullhorn' ? d.recruiter_user_id : undefined,
           on_stack_ranking: true,
           on_hours_report: false,
         });
 
-        knownUserIds.add(d.recruiter_user_id);
-        console.log(`Auto-added ${atsSource} user to user_config: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
+        checkedAtsIds.add(key);
+        console.log(`Auto-added ${atsSystem} user to user_config: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
       } catch (err) {
-        console.error(`Error auto-adding user ${d.recruiter_user_id}:`, err);
+        console.error(`Error auto-adding ${atsSystem} user ${d.recruiter_user_id}:`, err);
       }
     }
   }
@@ -121,69 +123,72 @@ class StackRankingService {
         : Promise.resolve([] as PlacementData[]),
     ]);
 
-    // 3. Get known user_config users and auto-discover new ones
-    const userConfigs = await databaseService.getUserConfigs(false);
-    const knownUserIds = new Set(userConfigs.map(u => u.user_id));
+    // 3. Auto-discover new users (check ATS-specific columns)
+    const checkedAtsIds = new Set<string>();
+    await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
+    await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
 
-    const allRawData = [...symplrData, ...bullhornData];
-    await this.autoDiscoverUsers(allRawData, knownUserIds, mappings);
-
-    // 3b. Re-fetch user configs after auto-discovery, filter to on_stack_ranking
-    const activeUsers = await databaseService.getUserConfigs(false);
-    const activeUserIds = new Set(
-      activeUsers.filter(u => u.on_stack_ranking).map(u => u.user_id)
-    );
+    // 3b. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
+    const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
+      databaseService.getAtsIdToConfigMap('symplr'),
+      databaseService.getAtsIdToConfigMap('bullhorn'),
+    ]);
 
     // 4. Filter by mapped divisions
     const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
     const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
 
-    // 5. Merge all placement data
-    const allData: PlacementData[] = [...filteredSymplr, ...filteredBullhorn];
-
-    // 6. Aggregate by recruiter (in case a recruiter appears in multiple data sources)
-    const recruiterMap = new Map<number, {
-      recruiter_name: string;
-      division_name: string;
-      division_id: number;
+    // 5-6. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
+    const configAggMap = new Map<number, {
+      config: UserConfig;
       head_count: number;
       total_bill_amount: number;
       total_pay_amount: number;
     }>();
 
-    for (const d of allData) {
-      const existing = recruiterMap.get(d.recruiter_user_id);
+    const aggregatePlacement = (d: PlacementData, config: UserConfig) => {
+      const existing = configAggMap.get(config.config_id);
       if (existing) {
         existing.head_count += d.head_count;
         existing.total_bill_amount += d.total_bill_amount;
         existing.total_pay_amount += d.total_pay_amount;
       } else {
-        recruiterMap.set(d.recruiter_user_id, {
-          recruiter_name: d.recruiter_name,
-          division_name: d.division_name,
-          division_id: d.division_id,
+        configAggMap.set(config.config_id, {
+          config,
           head_count: d.head_count,
           total_bill_amount: d.total_bill_amount,
           total_pay_amount: d.total_pay_amount,
         });
       }
+    };
+
+    for (const d of filteredSymplr) {
+      const config = symplrIdToConfig.get(d.recruiter_user_id);
+      if (config) aggregatePlacement(d, config);
+    }
+    for (const d of filteredBullhorn) {
+      const config = bullhornIdToConfig.get(d.recruiter_user_id);
+      if (config) aggregatePlacement(d, config);
     }
 
-    // 7. Compute GM$, GP%, Revenue (only for active user_config users)
+    // 7. Compute GM$, GP%, Revenue (only for on_stack_ranking users)
+    const divisions = await databaseService.getDivisions(false);
+    const divisionNameMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
 
-    for (const [userId, data] of recruiterMap) {
-      if (!activeUserIds.has(userId)) continue;
+    for (const [, agg] of configAggMap) {
+      if (!agg.config.on_stack_ranking) continue;
+      const { config: userConfig } = agg;
 
-      const revenue = data.total_bill_amount;
-      const gmDollars = data.total_bill_amount - data.total_pay_amount;
+      const revenue = agg.total_bill_amount;
+      const gmDollars = agg.total_bill_amount - agg.total_pay_amount;
       const gpPct = revenue > 0 ? (gmDollars / revenue) * 100 : 0;
 
       unranked.push({
-        recruiter_user_id: userId,
-        recruiter_name: data.recruiter_name,
-        division_name: data.division_name,
-        head_count: data.head_count,
+        recruiter_user_id: userConfig.user_id,
+        recruiter_name: userConfig.user_name,
+        division_name: divisionNameMap.get(userConfig.division_id) || 'Unknown',
+        head_count: agg.head_count,
         gross_margin_dollars: Math.round(gmDollars * 100) / 100,
         gross_profit_pct: Math.round(gpPct * 100) / 100,
         revenue: Math.round(revenue * 100) / 100,
@@ -257,50 +262,64 @@ class StackRankingService {
         : Promise.resolve([] as PlacementData[]),
     ]);
 
-    // Filter by mapped divisions and merge
+    // Filter by mapped divisions
     const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
     const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
-    const allData: PlacementData[] = [...filteredSymplr, ...filteredBullhorn];
 
-    // Aggregate by recruiter
-    const recruiterMap = new Map<number, {
-      recruiter_name: string;
-      division_name: string;
+    // Build ATS-to-config maps for resolving IDs
+    const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
+      databaseService.getAtsIdToConfigMap('symplr'),
+      databaseService.getAtsIdToConfigMap('bullhorn'),
+    ]);
+
+    // Aggregate by config_id (not ATS user_id)
+    const configAggMap = new Map<number, {
+      config: UserConfig;
       head_count: number;
       total_bill_amount: number;
       total_pay_amount: number;
     }>();
 
-    for (const d of allData) {
-      const existing = recruiterMap.get(d.recruiter_user_id);
+    const aggregateFin = (d: PlacementData, config: UserConfig) => {
+      const existing = configAggMap.get(config.config_id);
       if (existing) {
         existing.head_count += d.head_count;
         existing.total_bill_amount += d.total_bill_amount;
         existing.total_pay_amount += d.total_pay_amount;
       } else {
-        recruiterMap.set(d.recruiter_user_id, {
-          recruiter_name: d.recruiter_name,
-          division_name: d.division_name,
+        configAggMap.set(config.config_id, {
+          config,
           head_count: d.head_count,
           total_bill_amount: d.total_bill_amount,
           total_pay_amount: d.total_pay_amount,
         });
       }
+    };
+
+    for (const d of filteredSymplr) {
+      const config = symplrIdToConfig.get(d.recruiter_user_id);
+      if (config) aggregateFin(d, config);
+    }
+    for (const d of filteredBullhorn) {
+      const config = bullhornIdToConfig.get(d.recruiter_user_id);
+      if (config) aggregateFin(d, config);
     }
 
     // Compute GP$, GM% for each user
+    const divs = await databaseService.getDivisions(false);
+    const divNameMap = new Map(divs.map(d => [d.division_id, d.division_name]));
     const rows: FinancialRow[] = [];
-    for (const [userId, data] of recruiterMap) {
-      const gpDollars = data.total_bill_amount - data.total_pay_amount;
-      const gmPct = data.total_bill_amount > 0 ? (gpDollars / data.total_bill_amount) * 100 : 0;
+    for (const [, agg] of configAggMap) {
+      const gpDollars = agg.total_bill_amount - agg.total_pay_amount;
+      const gmPct = agg.total_bill_amount > 0 ? (gpDollars / agg.total_bill_amount) * 100 : 0;
 
       rows.push({
-        recruiter_user_id: userId,
-        recruiter_name: data.recruiter_name,
-        division_name: data.division_name,
-        head_count: data.head_count,
-        total_bill: Math.round(data.total_bill_amount * 100) / 100,
-        total_pay: Math.round(data.total_pay_amount * 100) / 100,
+        recruiter_user_id: agg.config.user_id,
+        recruiter_name: agg.config.user_name,
+        division_name: divNameMap.get(agg.config.division_id) || 'Unknown',
+        head_count: agg.head_count,
+        total_bill: Math.round(agg.total_bill_amount * 100) / 100,
+        total_pay: Math.round(agg.total_pay_amount * 100) / 100,
         gross_profit_dollars: Math.round(gpDollars * 100) / 100,
         gross_margin_pct: Math.round(gmPct * 100) / 100,
       });

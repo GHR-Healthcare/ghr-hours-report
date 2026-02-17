@@ -59,10 +59,14 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   
   context.log(`Calculating weekly hours, snapshot slot: ${snapshotSlot} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotSlot]})`);
   
-  // Get active, non-deleted recruiters only
-  const activeRecruiters = await databaseService.getRecruiters(false);
-  const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
-  context.log(`Found ${activeUserIds.size} active recruiters`);
+  // Get active user configs and build set of known Symplr IDs
+  const activeConfigs = await databaseService.getUserConfigs(false);
+  const activeHoursConfigs = activeConfigs.filter(c => c.on_hours_report);
+  const activeUserIds = new Set(activeHoursConfigs.map(r => r.user_id));
+  const knownSymplrIds = new Set(
+    activeConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
+  );
+  context.log(`Found ${activeHoursConfigs.length} active hours report users`);
   
   const thisWeekStart = formatDate(weekInfo.thisWeek.sunday);
   const nextWeekStart = formatDate(weekInfo.nextWeek.sunday);
@@ -101,14 +105,15 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
     
     // Check for new recruiters and auto-add them (only for thisWeek to avoid duplicates)
+    // Uses symplr_user_id to avoid cross-system ID collisions
     if (weekName === 'thisWeek') {
-      for (const [userId, hours] of hoursByRecruiter) {
-        if (!activeUserIds.has(userId)) {
-          const exists = await databaseService.recruiterExists(userId);
+      for (const [userId] of hoursByRecruiter) {
+        if (!knownSymplrIds.has(userId)) {
+          const exists = await databaseService.userConfigExistsByAtsId('symplr', userId);
           if (!exists) {
             try {
               const userName = await databaseService.getUserNameFromCtmsync(userId);
-              
+
               await databaseService.createRecruiter({
                 user_id: userId,
                 user_name: userName || `User ${userId}`,
@@ -118,7 +123,8 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
               });
 
               activeUserIds.add(userId);
-              context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
+              knownSymplrIds.add(userId);
+              context.log(`Auto-added recruiter: ${userName} (Symplr ID: ${userId})`);
             } catch (addError) {
               context.log(`Error adding recruiter ${userId}: ${addError}`);
             }
