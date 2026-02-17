@@ -17,6 +17,7 @@ import {
   UserConfig,
   CreateUserConfigRequest,
   UpdateUserConfigRequest,
+  AppConfig,
 } from '../types';
 
 class DatabaseService {
@@ -1006,6 +1007,52 @@ class DatabaseService {
       WHERE week_start < DATEADD(week, -12, GETDATE())
     `);
     return result.rowsAffected[0] || 0;
+  }
+  // ==========================================
+  // APP CONFIG
+  // ==========================================
+
+  async getConfigValue(key: string): Promise<string | null> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('key', sql.VarChar(100), key)
+      .query('SELECT config_value FROM dbo.app_config WHERE config_key = @key');
+    return result.recordset[0]?.config_value ?? null;
+  }
+
+  async getAllConfigs(): Promise<AppConfig[]> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .query('SELECT config_key, config_value, description, created_at, modified_at FROM dbo.app_config ORDER BY config_key');
+    return result.recordset;
+  }
+
+  async upsertConfig(key: string, value: string, description?: string): Promise<void> {
+    const pool = await this.getPool();
+    await pool.request()
+      .input('key', sql.VarChar(100), key)
+      .input('value', sql.NVarChar(sql.MAX), value)
+      .input('description', sql.NVarChar(500), description || null)
+      .query(`
+        MERGE dbo.app_config AS target
+        USING (SELECT @key AS config_key) AS source
+        ON target.config_key = source.config_key
+        WHEN MATCHED THEN
+            UPDATE SET config_value = @value,
+                       description = ISNULL(@description, target.description),
+                       modified_at = GETDATE()
+        WHEN NOT MATCHED THEN
+            INSERT (config_key, config_value, description)
+            VALUES (@key, @value, @description);
+      `);
+  }
+
+  async deleteConfig(key: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('key', sql.VarChar(100), key)
+      .query('DELETE FROM dbo.app_config WHERE config_key = @key');
+    return (result.rowsAffected[0] || 0) > 0;
   }
 }
 

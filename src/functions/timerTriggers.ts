@@ -2,6 +2,7 @@ import { app, InvocationContext, Timer } from '@azure/functions';
 import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
 import { stackRankingService } from '../services/stackRanking';
+import { configService } from '../services/config';
 
 // Helper function to get week boundaries
 function getWeekInfo(forDate?: Date) {
@@ -165,14 +166,15 @@ async function sendReportEmail(context: InvocationContext, subject: string, week
   const html = emailService.generateReportHtml(reportData, weeklyTotals, true);
 
   // Send email
-  const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
-  
+  const recipients = await configService.getList('HOURS_REPORT_TO_EMAIL');
+
   if (recipients.length === 0) {
-    context.warn('No email recipients configured. Set EMAIL_RECIPIENTS environment variable.');
+    context.warn('No hours report recipients configured. Set HOURS_REPORT_TO_EMAIL in Settings.');
     return;
   }
 
-  await emailService.sendEmail(recipients, subject, html);
+  const fromAddress = await configService.get('HOURS_REPORT_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+  await emailService.sendEmail(recipients, subject, html, fromAddress);
   context.log(`Email sent to ${recipients.length} recipients: ${subject}`);
 }
 
@@ -300,14 +302,15 @@ app.timer('weeklyStackRanking', {
 
       const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
 
-      const recipients = (process.env.STACK_RANKING_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+      const recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
 
       if (recipients.length === 0) {
-        context.warn('No stack ranking recipients configured. Set STACK_RANKING_RECIPIENTS environment variable.');
+        context.warn('No stack ranking recipients configured. Set STACK_RANKING_TO_EMAIL in Settings.');
         return;
       }
 
-      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html);
+      const fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html, fromAddress);
       context.log(`Stack ranking email sent to ${recipients.length} recipients`);
     } catch (error) {
       context.error('Error in weekly stack ranking:', error);

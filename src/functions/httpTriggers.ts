@@ -4,6 +4,7 @@ import { emailService } from '../services/email';
 import { clearConnectService } from '../services/clearconnect';
 import { calculateAllHours } from '../utils/hours-calculator';
 import { stackRankingService } from '../services/stackRanking';
+import { configService } from '../services/config';
 
 // DIVISIONS
 
@@ -464,18 +465,19 @@ app.http('triggerEmail', {
       }
       
       const html = emailService.generateReportHtml(reportData, weeklyTotals, includeLastWeek);
-      
-      const recipients = (process.env.EMAIL_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
-      
+
+      const recipients = await configService.getList('HOURS_REPORT_TO_EMAIL');
+
       let subject: string;
       if (emailType === 'monday') {
         subject = 'Weekly Hours Recap - Previous Week Final';
       } else {
         subject = 'Daily Hours Report';
       }
-      
-      await emailService.sendEmail(recipients, subject, html);
-      
+
+      const fromAddress = await configService.get('HOURS_REPORT_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+      await emailService.sendEmail(recipients, subject, html, fromAddress);
+
       return { jsonBody: { success: true, recipients: recipients.length, emailType, subject } };
     } catch (error) {
       context.error('Error sending email:', error);
@@ -519,8 +521,9 @@ app.http('sendTestEmail', {
         subject = '[TEST] Daily Hours Report';
       }
       
-      await emailService.sendEmail([recipient], subject, html);
-      
+      const fromAddress = await configService.get('HOURS_REPORT_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+      await emailService.sendEmail([recipient], subject, html, fromAddress);
+
       return { jsonBody: { success: true, recipient, emailType: emailType || 'daily' } };
     } catch (error) {
       context.error('Error sending test email:', error);
@@ -619,6 +622,7 @@ app.http('adminPortal', {
       <button class="tab" data-tab="stack-ranking">Stack Ranking</button>
       <button class="tab" data-tab="financials">Financials</button>
       <button class="tab" data-tab="user-admin">User Admin</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </div>
 
     <div id="alert"></div>
@@ -774,6 +778,48 @@ app.http('adminPortal', {
     </div>
   </div>
 
+    <!-- Settings Panel -->
+    <div class="panel" id="settings-panel">
+      <h2>App Settings</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem;">Manage application configuration. Values here override environment variables. Deleting a value reverts to the environment variable default.</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Setting</th>
+            <th>Value</th>
+            <th>Description</th>
+            <th>Last Modified</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="settings-table"></tbody>
+      </table>
+
+      <div class="card" style="margin-top: 1.5rem;">
+        <h3>Add / Edit Setting</h3>
+        <div class="form-group">
+          <label>Key</label>
+          <select id="setting-key" style="width:100%;padding:0.625rem;border:1px solid #d1d5db;border-radius:6px;font-size:1rem;">
+            <option value="HOURS_REPORT_FROM_EMAIL">HOURS_REPORT_FROM_EMAIL</option>
+            <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
+            <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL</option>
+            <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Value</label>
+          <textarea id="setting-value" rows="3" style="width:100%;padding:0.625rem;border:1px solid #d1d5db;border-radius:6px;font-size:1rem;font-family:monospace;" placeholder="Enter value (for recipient lists, use comma-separated emails)"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" id="setting-description" placeholder="Optional description">
+        </div>
+        <button class="btn btn-primary" onclick="saveSetting()">Save Setting</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Add/Edit User Modal -->
   <div class="modal" id="user-modal">
     <div class="modal-content">
@@ -858,6 +904,9 @@ app.http('adminPortal', {
         }
         if (tab.dataset.tab === 'user-admin') {
           loadUsers();
+        }
+        if (tab.dataset.tab === 'settings') {
+          loadSettings();
         }
       });
     });
@@ -1359,6 +1408,102 @@ app.http('adminPortal', {
       }
     });
 
+    // =========== SETTINGS ===========
+
+    async function loadSettings() {
+      try {
+        var res = await fetch(API_BASE + '/config');
+        var configs = await res.json();
+        var tbody = document.getElementById('settings-table');
+
+        if (!configs.length) {
+          tbody.innerHTML = '<tr><td colspan="5" style="color:#6b7280;text-align:center;">No settings configured yet. Values will fall back to environment variables.</td></tr>';
+          return;
+        }
+
+        var html = '';
+        configs.forEach(function(c) {
+          var displayValue = c.config_value;
+          if (displayValue.length > 80) {
+            displayValue = displayValue.substring(0, 80) + '...';
+          }
+          var modifiedDate = c.modified_at ? new Date(c.modified_at).toLocaleString() : '-';
+          html += '<tr>' +
+            '<td><strong>' + c.config_key + '</strong></td>' +
+            '<td style="font-family:monospace;font-size:0.85rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;word-break:break-all;">' + displayValue + '</td>' +
+            '<td style="color:#6b7280;font-size:0.85rem;">' + (c.description || '-') + '</td>' +
+            '<td style="color:#6b7280;font-size:0.85rem;white-space:nowrap;">' + modifiedDate + '</td>' +
+            '<td class="actions">' +
+              '<button class="btn btn-secondary" onclick="editSetting(\'' + c.config_key + '\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button> ' +
+              '<button class="btn btn-danger" onclick="deleteSetting(\'' + c.config_key + '\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Delete</button>' +
+            '</td></tr>';
+        });
+        tbody.innerHTML = html;
+      } catch (err) {
+        document.getElementById('settings-table').innerHTML =
+          '<tr><td colspan="5" class="alert alert-error">Error loading settings: ' + err.message + '</td></tr>';
+      }
+    }
+
+    function editSetting(key) {
+      fetch(API_BASE + '/config').then(function(res) { return res.json(); }).then(function(configs) {
+        var config = configs.find(function(c) { return c.config_key === key; });
+        if (config) {
+          document.getElementById('setting-key').value = config.config_key;
+          document.getElementById('setting-value').value = config.config_value;
+          document.getElementById('setting-description').value = config.description || '';
+          document.getElementById('setting-key').closest('.card').scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    }
+
+    async function saveSetting() {
+      var key = document.getElementById('setting-key').value;
+      var value = document.getElementById('setting-value').value;
+      var description = document.getElementById('setting-description').value;
+
+      if (!value.trim()) {
+        showAlert('Please enter a value', 'error');
+        return;
+      }
+
+      try {
+        var res = await fetch(API_BASE + '/config/' + encodeURIComponent(key), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: value, description: description || undefined })
+        });
+        if (res.ok) {
+          showAlert('Setting "' + key + '" saved successfully');
+          document.getElementById('setting-value').value = '';
+          document.getElementById('setting-description').value = '';
+          await loadSettings();
+        } else {
+          var err = await res.json();
+          showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showAlert('Error saving setting: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteSetting(key) {
+      if (!confirm('Delete "' + key + '"? The system will fall back to the environment variable value.')) return;
+
+      try {
+        var res = await fetch(API_BASE + '/config/' + encodeURIComponent(key), { method: 'DELETE' });
+        if (res.ok || res.status === 204) {
+          showAlert('Setting "' + key + '" deleted. Using env var fallback.');
+          await loadSettings();
+        } else {
+          var err = await res.json();
+          showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showAlert('Error deleting setting: ' + err.message, 'error');
+      }
+    }
+
     // Initialize
     async function init() {
       await loadDivisions();
@@ -1688,14 +1833,15 @@ app.http('sendStackRankingEmail', {
       if (testRecipient) {
         recipients = [testRecipient];
       } else {
-        recipients = (process.env.STACK_RANKING_RECIPIENTS || '').split(',').map(e => e.trim()).filter(e => e);
+        recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
       }
 
       if (recipients.length === 0) {
-        return { status: 400, jsonBody: { error: 'No recipients configured. Set STACK_RANKING_RECIPIENTS or provide a recipient in the request body.' } };
+        return { status: 400, jsonBody: { error: 'No recipients configured. Set STACK_RANKING_TO_EMAIL in Settings or provide a recipient in the request body.' } };
       }
 
-      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html);
+      const fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html, fromAddress);
 
       return {
         jsonBody: {
@@ -1746,6 +1892,69 @@ app.http('getFinancials', {
     } catch (error) {
       context.error('Error getting financial data:', error);
       return { status: 500, jsonBody: { error: 'Failed to get financial data' } };
+    }
+  }
+});
+
+// APP CONFIG
+
+app.http('getConfigs', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'config',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const configs = await databaseService.getAllConfigs();
+      return { jsonBody: configs };
+    } catch (error) {
+      context.error('Error getting configs:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get configs' } };
+    }
+  }
+});
+
+app.http('upsertConfig', {
+  methods: ['PUT'],
+  authLevel: 'anonymous',
+  route: 'config/{key}',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const key = request.params.key || '';
+      const body = await request.json() as any;
+      const { value, description } = body;
+
+      if (!key || value === undefined || value === null) {
+        return { status: 400, jsonBody: { error: 'key and value are required' } };
+      }
+
+      await databaseService.upsertConfig(key, value, description);
+      configService.invalidate(key);
+
+      return { jsonBody: { config_key: key, config_value: value, description } };
+    } catch (error) {
+      context.error('Error upserting config:', error);
+      return { status: 500, jsonBody: { error: 'Failed to update config' } };
+    }
+  }
+});
+
+app.http('deleteConfig', {
+  methods: ['DELETE'],
+  authLevel: 'anonymous',
+  route: 'config/{key}',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const key = request.params.key || '';
+      const deleted = await databaseService.deleteConfig(key);
+      configService.invalidate(key);
+
+      if (!deleted) {
+        return { status: 404, jsonBody: { error: 'Config key not found' } };
+      }
+      return { status: 204 };
+    } catch (error) {
+      context.error('Error deleting config:', error);
+      return { status: 500, jsonBody: { error: 'Failed to delete config' } };
     }
   }
 });

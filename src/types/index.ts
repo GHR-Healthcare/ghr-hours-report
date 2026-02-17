@@ -251,3 +251,13 @@ export interface StackRankingTotals {
   total_revenue: number;
   overall_gp_pct: number;
 }
+
+// App Config Types
+
+export interface AppConfig {
+  config_key: string;
+  config_value: string;
+  description: string | null;
+  created_at: Date;
+  modified_at: Date;
+}

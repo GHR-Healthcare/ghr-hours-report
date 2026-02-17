@@ -4,7 +4,6 @@ class EmailService {
   private tenantId: string;
   private clientId: string;
   private clientSecret: string;
-  private fromAddress: string;
   private senderUserId: string;
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
@@ -13,7 +12,6 @@ class EmailService {
     this.tenantId = process.env.AZURE_TENANT_ID || '';
     this.clientId = process.env.AZURE_CLIENT_ID || '';
     this.clientSecret = process.env.AZURE_CLIENT_SECRET || '';
-    this.fromAddress = process.env.EMAIL_FROM || 'contracts@ghrhealthcare.com';
     this.senderUserId = process.env.EMAIL_SENDER_USER || 'itadmin@ghrhealthcare.onmicrosoft.com';
   }
 
@@ -53,13 +51,14 @@ class EmailService {
     return this.accessToken;
   }
 
-  async sendEmail(recipients: string[], subject: string, htmlContent: string): Promise<void> {
+  async sendEmail(recipients: string[], subject: string, htmlContent: string, fromAddress?: string): Promise<void> {
     if (!this.tenantId || !this.clientId || !this.clientSecret) {
       console.log('Email not configured. Missing Azure AD credentials.');
       console.log(`Would send email to ${recipients.join(', ')} with subject: ${subject}`);
       return;
     }
 
+    const senderFrom = fromAddress || 'contracts@ghrhealthcare.com';
     const accessToken = await this.getAccessToken();
 
     const message = {
@@ -71,7 +70,7 @@ class EmailService {
         },
         from: {
           emailAddress: {
-            address: this.fromAddress
+            address: senderFrom
           }
         },
         toRecipients: recipients.map(email => ({
