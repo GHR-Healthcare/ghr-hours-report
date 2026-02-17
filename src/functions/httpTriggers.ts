@@ -1105,7 +1105,7 @@ app.http('adminPortal', {
       results.innerHTML = '<p>Loading financial data...</p>';
 
       try {
-        var res = await fetch(API_BASE + '/stack-ranking?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd);
+        var res = await fetch(API_BASE + '/financials?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd);
         var data = await res.json();
         if (data.error) { results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>'; return; }
 
@@ -1115,23 +1115,21 @@ app.http('adminPortal', {
         var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
         var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
-        html += '<table><thead><tr><th>Name</th><th>Division</th><th>Head Count</th><th>Total Bill</th><th>Total Pay</th><th>GM$</th><th>GP%</th></tr></thead><tbody>';
+        html += '<table><thead><tr><th>Name</th><th>Division</th><th>HC</th><th>Total Bill</th><th>Total Pay</th><th>GP$</th><th>GM%</th></tr></thead><tbody>';
         rows.forEach(function(r) {
-          var totalPay = r.revenue - r.gross_margin_dollars;
           html += '<tr><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
             '<td style="text-align:right">' + r.head_count + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(totalPay) + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
-            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
+            '<td style="text-align:right">' + fmtMoney(r.total_bill) + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.total_pay) + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
+            '<td style="text-align:right">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
         });
-        var totalPay = (totals.total_revenue || 0) - (totals.total_gm_dollars || 0);
         html += '<tr style="font-weight:bold;background:#f0f0f0;"><td>TOTALS</td><td></td>' +
           '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totalPay) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
-          '<td style="text-align:right">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
+          '<td style="text-align:right">' + fmtMoney(totals.total_bill) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_pay) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_gp_dollars) + '</td>' +
+          '<td style="text-align:right">' + fmtPct(totals.overall_gm_pct) + '</td></tr>';
         html += '</tbody></table>';
         results.innerHTML = html;
       } catch (err) {
@@ -1626,6 +1624,43 @@ app.http('sendStackRankingEmail', {
     } catch (error) {
       context.error('Error sending stack ranking email:', error);
       return { status: 500, jsonBody: { error: 'Failed to send stack ranking email' } };
+    }
+  }
+});
+
+// FINANCIALS
+
+app.http('getFinancials', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'financials',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const weekStartParam = request.query.get('weekStart');
+      const weekEndParam = request.query.get('weekEnd');
+
+      let weekStart: string;
+      let weekEnd: string;
+
+      if (weekStartParam && weekEndParam) {
+        weekStart = weekStartParam;
+        weekEnd = weekEndParam;
+      } else {
+        // Default to ~2 weeks back
+        const boundaries = stackRankingService.getLastWeekBoundaries();
+        const d = new Date(boundaries.weekStart + 'T00:00:00Z');
+        d.setUTCDate(d.getUTCDate() - 7);
+        weekStart = d.toISOString().split('T')[0];
+        const dEnd = new Date(weekStart + 'T00:00:00Z');
+        dEnd.setUTCDate(dEnd.getUTCDate() + 6);
+        weekEnd = dEnd.toISOString().split('T')[0];
+      }
+
+      const { rows, totals } = await stackRankingService.getFinancialData(weekStart, weekEnd);
+      return { jsonBody: { weekStart, weekEnd, rows, totals } };
+    } catch (error) {
+      context.error('Error getting financial data:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get financial data' } };
     }
   }
 });

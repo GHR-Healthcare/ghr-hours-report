@@ -1,5 +1,7 @@
 import { databaseService } from './database';
 import {
+  FinancialRow,
+  FinancialTotals,
   PlacementData,
   RecruiterRole,
   StackRankingRow,
@@ -226,6 +228,99 @@ class StackRankingService {
 
     // 12. Save this week's snapshot
     await databaseService.saveStackRankingSnapshot(weekStart, rows);
+
+    return { rows, totals };
+  }
+
+  /**
+   * Get financial data for all users (no ranking, no on_stack_ranking filter).
+   * Returns per-user totals: bill, pay, GP$, GM%.
+   */
+  async getFinancialData(
+    weekStart: string,
+    weekEnd: string
+  ): Promise<{ rows: FinancialRow[]; totals: FinancialTotals }> {
+    const mappings = await databaseService.getDivisionAtsMappings();
+    const symplrDivisions = new Set(
+      mappings.filter(m => m.ats_system === 'symplr').map(m => m.division_id)
+    );
+    const bullhornDivisions = new Set(
+      mappings.filter(m => m.ats_system === 'bullhorn').map(m => m.division_id)
+    );
+
+    const [symplrData, bullhornData] = await Promise.all([
+      symplrDivisions.size > 0
+        ? databaseService.getSymplrPlacementData(weekStart, weekEnd)
+        : Promise.resolve([] as PlacementData[]),
+      bullhornDivisions.size > 0
+        ? databaseService.getBullhornPlacementData(weekStart, weekEnd)
+        : Promise.resolve([] as PlacementData[]),
+    ]);
+
+    // Filter by mapped divisions and merge
+    const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
+    const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
+    const allData: PlacementData[] = [...filteredSymplr, ...filteredBullhorn];
+
+    // Aggregate by recruiter
+    const recruiterMap = new Map<number, {
+      recruiter_name: string;
+      division_name: string;
+      head_count: number;
+      total_bill_amount: number;
+      total_pay_amount: number;
+    }>();
+
+    for (const d of allData) {
+      const existing = recruiterMap.get(d.recruiter_user_id);
+      if (existing) {
+        existing.head_count += d.head_count;
+        existing.total_bill_amount += d.total_bill_amount;
+        existing.total_pay_amount += d.total_pay_amount;
+      } else {
+        recruiterMap.set(d.recruiter_user_id, {
+          recruiter_name: d.recruiter_name,
+          division_name: d.division_name,
+          head_count: d.head_count,
+          total_bill_amount: d.total_bill_amount,
+          total_pay_amount: d.total_pay_amount,
+        });
+      }
+    }
+
+    // Compute GP$, GM% for each user
+    const rows: FinancialRow[] = [];
+    for (const [userId, data] of recruiterMap) {
+      const gpDollars = data.total_bill_amount - data.total_pay_amount;
+      const gmPct = data.total_bill_amount > 0 ? (gpDollars / data.total_bill_amount) * 100 : 0;
+
+      rows.push({
+        recruiter_user_id: userId,
+        recruiter_name: data.recruiter_name,
+        division_name: data.division_name,
+        head_count: data.head_count,
+        total_bill: Math.round(data.total_bill_amount * 100) / 100,
+        total_pay: Math.round(data.total_pay_amount * 100) / 100,
+        gross_profit_dollars: Math.round(gpDollars * 100) / 100,
+        gross_margin_pct: Math.round(gmPct * 100) / 100,
+      });
+    }
+
+    // Sort by GP$ descending
+    rows.sort((a, b) => b.gross_profit_dollars - a.gross_profit_dollars);
+
+    // Compute totals
+    const totals: FinancialTotals = {
+      total_head_count: rows.reduce((sum, r) => sum + r.head_count, 0),
+      total_bill: Math.round(rows.reduce((sum, r) => sum + r.total_bill, 0) * 100) / 100,
+      total_pay: Math.round(rows.reduce((sum, r) => sum + r.total_pay, 0) * 100) / 100,
+      total_gp_dollars: 0,
+      overall_gm_pct: 0,
+    };
+    totals.total_gp_dollars = Math.round((totals.total_bill - totals.total_pay) * 100) / 100;
+    totals.overall_gm_pct = totals.total_bill > 0
+      ? Math.round((totals.total_gp_dollars / totals.total_bill) * 100 * 100) / 100
+      : 0;
 
     return { rows, totals };
   }

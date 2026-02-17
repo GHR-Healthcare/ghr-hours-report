@@ -199,6 +199,25 @@ export interface PlacementData {
   total_pay_amount: number;
 }
 
+export interface FinancialRow {
+  recruiter_user_id: number;
+  recruiter_name: string;
+  division_name: string;
+  head_count: number;
+  total_bill: number;
+  total_pay: number;
+  gross_profit_dollars: number;
+  gross_margin_pct: number;
+}
+
+export interface FinancialTotals {
+  total_head_count: number;
+  total_bill: number;
+  total_pay: number;
+  total_gp_dollars: number;
+  overall_gm_pct: number;
+}
+
 export interface StackRankingRow {
   rank: number;
   recruiter_name: string;
