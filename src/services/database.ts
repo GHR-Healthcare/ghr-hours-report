@@ -22,7 +22,7 @@ class DatabaseService {
   private bullhornPool: sql.ConnectionPool | null = null;
   private config: sql.config;
   private ctmsyncConfig: sql.config;
-  private bullhornConfig: sql.config;
+  private bullhornConnectionString: string;
 
   constructor() {
     // Main hours_report database
@@ -51,19 +51,8 @@ class DatabaseService {
       }
     };
 
-    // Bullhorn mirror database (separate server)
-    this.bullhornConfig = {
-      server: process.env.BULLHORN_SQL_SERVER || '',
-      database: process.env.BULLHORN_SQL_DATABASE || 'DM_GeneralHealthCare_24187_EMS',
-      user: process.env.BULLHORN_SQL_USER || '',
-      password: process.env.BULLHORN_SQL_PASSWORD || '',
-      port: parseInt(process.env.BULLHORN_SQL_PORT || '1433'),
-      requestTimeout: 600000,
-      options: {
-        encrypt: true,
-        trustServerCertificate: true
-      }
-    };
+    // Bullhorn mirror database (separate server, single connection string)
+    this.bullhornConnectionString = process.env.BULLHORN_CONNECTION_STRING || '';
   }
 
   async getPool(): Promise<sql.ConnectionPool> {
@@ -82,7 +71,7 @@ class DatabaseService {
 
   async getBullhornPool(): Promise<sql.ConnectionPool> {
     if (!this.bullhornPool) {
-      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
+      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConnectionString).connect();
     }
     return this.bullhornPool;
   }
@@ -212,12 +201,15 @@ class DatabaseService {
       .input('divisionId', sql.Int, data.division_id)
       .input('weeklyGoal', sql.Decimal(10, 2), data.weekly_goal)
       .input('displayOrder', sql.Int, data.display_order || 0)
+      .input('role', sql.VarChar(50), data.role || 'recruiter')
+      .input('title', sql.NVarChar(200), data.title || null)
+      .input('atsSource', sql.VarChar(20), data.ats_source || null)
       .query(`
-        INSERT INTO dbo.recruiter_config (user_id, user_name, division_id, weekly_goal, display_order)
+        INSERT INTO dbo.recruiter_config (user_id, user_name, division_id, weekly_goal, display_order, role, title, ats_source)
         OUTPUT INSERTED.*
-        VALUES (@userId, @userName, @divisionId, @weeklyGoal, @displayOrder)
+        VALUES (@userId, @userName, @divisionId, @weeklyGoal, @displayOrder, @role, @title, @atsSource)
       `);
-    
+
     return result.recordset[0];
   }
 
@@ -246,13 +238,21 @@ class DatabaseService {
       updates.push('is_active = @isActive');
       request.input('isActive', sql.Bit, data.is_active);
     }
+    if (data.role !== undefined) {
+      updates.push('role = @role');
+      request.input('role', sql.VarChar(50), data.role);
+    }
+    if (data.title !== undefined) {
+      updates.push('title = @title');
+      request.input('title', sql.NVarChar(200), data.title);
+    }
 
     if (updates.length === 0) return null;
 
     updates.push('modified_at = GETDATE()');
 
     const result = await request.query(`
-      UPDATE dbo.recruiter_config 
+      UPDATE dbo.recruiter_config
       SET ${updates.join(', ')}
       OUTPUT INSERTED.*
       WHERE config_id = @configId
@@ -640,21 +640,40 @@ class DatabaseService {
   // Get user name from ctmsync users table
   async getUserNameFromCtmsync(userId: number): Promise<string | null> {
     const pool = await this.getCtmsyncPool();
-    
+
     const result = await pool.request()
       .input('userId', sql.Int, userId)
       .query(`
-        SELECT firstname, lastname 
-        FROM dbo.users 
+        SELECT firstname, lastname
+        FROM dbo.users
         WHERE userid = @userId
       `);
-    
+
     if (result.recordset.length > 0) {
       const row = result.recordset[0];
       return `${row.firstname} ${row.lastname}`.trim();
     }
-    
+
     return null;
+  }
+
+  // Get user title from ctmsync users table
+  async getUserTitleFromCtmsync(userId: number): Promise<string | null> {
+    const pool = await this.getCtmsyncPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`SELECT title FROM dbo.users WHERE userid = @userId`);
+    return result.recordset[0]?.title || null;
+  }
+
+  // Get user title from Bullhorn CorporateUser table
+  async getUserTitleFromBullhorn(userId: number): Promise<string | null> {
+    if (!this.bullhornConnectionString) return null;
+    const pool = await this.getBullhornPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`SELECT occupation FROM dbo.CorporateUser WHERE userID = @userId`);
+    return result.recordset[0]?.occupation || null;
   }
 
   // Get live hours by day for a week (for forecasting next week)
@@ -785,7 +804,7 @@ class DatabaseService {
   }
 
   async getBullhornPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
-    if (!process.env.BULLHORN_SQL_SERVER) {
+    if (!this.bullhornConnectionString) {
       console.warn('Bullhorn connection not configured, skipping');
       return [];
     }

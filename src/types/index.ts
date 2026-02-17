@@ -9,6 +9,8 @@ export interface Division {
   modified_at: Date;
 }
 
+export type RecruiterRole = 'recruiter' | 'account_manager' | 'unknown';
+
 export interface RecruiterConfig {
   config_id: number;
   user_id: number;
@@ -17,6 +19,9 @@ export interface RecruiterConfig {
   weekly_goal: number;
   display_order: number;
   is_active: boolean;
+  role: RecruiterRole;
+  title: string | null;
+  ats_source: string | null;
   created_at: Date;
   modified_at: Date;
 }
@@ -122,6 +127,9 @@ export interface CreateRecruiterRequest {
   division_id: number;
   weekly_goal: number;
   display_order?: number;
+  role?: RecruiterRole;
+  title?: string;
+  ats_source?: string;
 }
 
 export interface UpdateRecruiterRequest {
@@ -131,6 +139,8 @@ export interface UpdateRecruiterRequest {
   weekly_goal?: number;
   display_order?: number;
   is_active?: boolean;
+  role?: RecruiterRole;
+  title?: string;
 }
 
 // Stack Ranking Types

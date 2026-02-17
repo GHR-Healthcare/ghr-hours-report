@@ -632,9 +632,12 @@ app.http('adminPortal', {
           <tr>
             <th>Name</th>
             <th>User ID</th>
+            <th>Title</th>
+            <th>Role</th>
             <th>Division</th>
             <th>Weekly Goal</th>
             <th>Display Order</th>
+            <th>ATS</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -740,6 +743,18 @@ app.http('adminPortal', {
           <label>Division</label>
           <select id="edit-division"></select>
         </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="edit-role">
+            <option value="recruiter">Recruiter</option>
+            <option value="account_manager">Account Manager</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Title (from ATS)</label>
+          <input type="text" id="edit-title" placeholder="e.g. Staffing Specialist, Account Executive">
+        </div>
         <div class="form-row">
           <div class="form-group">
             <label>Weekly Goal (hours)</label>
@@ -812,13 +827,18 @@ app.http('adminPortal', {
       const tbody = document.getElementById('recruiters-table');
       tbody.innerHTML = recruiters.map(r => {
         const div = divisions.find(d => d.division_id === r.division_id);
+        const roleLabel = r.role === 'account_manager' ? 'Account Manager' : r.role === 'recruiter' ? 'Recruiter' : 'Unknown';
+        const roleBadgeClass = r.role === 'unknown' ? 'badge-inactive' : 'badge-active';
         return '<tr>' +
           '<td><strong>' + r.user_name + '</strong></td>' +
           '<td>' + r.user_id + '</td>' +
+          '<td>' + (r.title || '<span style="color:#9ca3af">—</span>') + '</td>' +
+          '<td><span class="badge ' + roleBadgeClass + '">' + roleLabel + '</span></td>' +
           '<td>' + (div ? div.division_name : 'Unknown') + '</td>' +
           '<td>' + r.weekly_goal + '</td>' +
           '<td>' + r.display_order + '</td>' +
-          '<td><span class="badge ' + (r.is_active ? 'badge-active' : 'badge-inactive') + '">' + 
+          '<td>' + (r.ats_source || '<span style="color:#9ca3af">—</span>') + '</td>' +
+          '<td><span class="badge ' + (r.is_active ? 'badge-active' : 'badge-inactive') + '">' +
             (r.is_active ? 'Active' : 'Inactive') + '</span></td>' +
           '<td class="actions">' +
             '<button class="btn btn-secondary" onclick="editRecruiter(' + r.config_id + ')">Edit</button>' +
@@ -841,6 +861,8 @@ app.http('adminPortal', {
       document.getElementById('modal-title').textContent = 'Add Recruiter';
       document.getElementById('recruiter-form').reset();
       document.getElementById('edit-config-id').value = '';
+      document.getElementById('edit-role').value = 'recruiter';
+      document.getElementById('edit-title').value = '';
       document.getElementById('edit-active').checked = true;
       document.getElementById('recruiter-modal').classList.add('active');
     }
@@ -848,12 +870,14 @@ app.http('adminPortal', {
     function editRecruiter(configId) {
       const r = recruiters.find(rec => rec.config_id === configId);
       if (!r) return;
-      
+
       document.getElementById('modal-title').textContent = 'Edit Recruiter';
       document.getElementById('edit-config-id').value = r.config_id;
       document.getElementById('edit-name').value = r.user_name;
       document.getElementById('edit-user-id').value = r.user_id;
       document.getElementById('edit-division').value = r.division_id;
+      document.getElementById('edit-role').value = r.role || 'unknown';
+      document.getElementById('edit-title').value = r.title || '';
       document.getElementById('edit-goal').value = r.weekly_goal;
       document.getElementById('edit-order').value = r.display_order;
       document.getElementById('edit-active').checked = r.is_active;
@@ -873,6 +897,8 @@ app.http('adminPortal', {
         user_name: document.getElementById('edit-name').value,
         user_id: parseInt(document.getElementById('edit-user-id').value),
         division_id: parseInt(document.getElementById('edit-division').value),
+        role: document.getElementById('edit-role').value,
+        title: document.getElementById('edit-title').value || undefined,
         weekly_goal: parseInt(document.getElementById('edit-goal').value) || 0,
         display_order: parseInt(document.getElementById('edit-order').value) || 99,
         is_active: document.getElementById('edit-active').checked

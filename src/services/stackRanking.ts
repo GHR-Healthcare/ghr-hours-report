@@ -1,12 +1,89 @@
 import { databaseService } from './database';
 import {
-  DivisionAtsMapping,
   PlacementData,
+  RecruiterRole,
   StackRankingRow,
   StackRankingTotals,
 } from '../types';
 
 class StackRankingService {
+  /**
+   * Infer role from a title string.
+   */
+  inferRole(title: string | null): RecruiterRole {
+    if (!title) return 'unknown';
+    const t = title.toLowerCase();
+    if (
+      t.includes('recruiter') ||
+      t.includes('staffing specialist') ||
+      t.includes('talent acquisition') ||
+      t.includes('sourcer')
+    ) {
+      return 'recruiter';
+    }
+    if (
+      t.includes('account manager') ||
+      t.includes('account executive') ||
+      t.includes('sales') ||
+      t.includes('business development') ||
+      t.includes('client manager')
+    ) {
+      return 'account_manager';
+    }
+    return 'unknown';
+  }
+
+  /**
+   * Auto-discover and add new users found in ATS data.
+   * Fetches their title, infers role, and adds to recruiter_config.
+   */
+  async autoDiscoverUsers(
+    allData: PlacementData[],
+    activeUserIds: Set<number>,
+    mappings: { division_id: number; ats_system: string }[]
+  ): Promise<void> {
+    const atsMap = new Map(mappings.map(m => [m.division_id, m.ats_system]));
+
+    for (const d of allData) {
+      if (activeUserIds.has(d.recruiter_user_id)) continue;
+
+      const exists = await databaseService.recruiterExists(d.recruiter_user_id);
+      if (exists) {
+        activeUserIds.add(d.recruiter_user_id);
+        continue;
+      }
+
+      try {
+        const atsSource = atsMap.get(d.division_id) || 'symplr';
+        let title: string | null = null;
+
+        if (atsSource === 'bullhorn') {
+          title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
+        } else {
+          title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
+        }
+
+        const role = this.inferRole(title);
+
+        await databaseService.createRecruiter({
+          user_id: d.recruiter_user_id,
+          user_name: d.recruiter_name || `User ${d.recruiter_user_id}`,
+          division_id: d.division_id || 1,
+          weekly_goal: 0,
+          display_order: 99,
+          role,
+          title: title || undefined,
+          ats_source: atsSource,
+        });
+
+        activeUserIds.add(d.recruiter_user_id);
+        console.log(`Auto-added ${atsSource} user: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role})`);
+      } catch (err) {
+        console.error(`Error auto-adding user ${d.recruiter_user_id}:`, err);
+      }
+    }
+  }
+
   /**
    * Calculate stack ranking for a given week.
    * Queries each ATS mirror (filtered by division mapping), merges results,
@@ -35,14 +112,21 @@ class StackRankingService {
         : Promise.resolve([] as PlacementData[]),
     ]);
 
-    // 3. Filter by mapped divisions
+    // 3. Get active recruiters and auto-discover new ones
+    const activeRecruiters = await databaseService.getRecruiters(false);
+    const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
+
+    const allRawData = [...symplrData, ...bullhornData];
+    await this.autoDiscoverUsers(allRawData, activeUserIds, mappings);
+
+    // 4. Filter by mapped divisions
     const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
     const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
 
-    // 4. Merge all placement data
+    // 5. Merge all placement data
     const allData: PlacementData[] = [...filteredSymplr, ...filteredBullhorn];
 
-    // 5. Aggregate by recruiter (in case a recruiter appears in multiple data sources)
+    // 6. Aggregate by recruiter (in case a recruiter appears in multiple data sources)
     const recruiterMap = new Map<number, {
       recruiter_name: string;
       division_name: string;
@@ -70,7 +154,7 @@ class StackRankingService {
       }
     }
 
-    // 6. Compute GM$, GP%, Revenue and build unranked rows
+    // 7. Compute GM$, GP%, Revenue and build unranked rows
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
 
     for (const [userId, data] of recruiterMap) {
@@ -89,17 +173,17 @@ class StackRankingService {
       });
     }
 
-    // 7. Sort by GM$ descending, assign ranks
+    // 8. Sort by GM$ descending, assign ranks
     unranked.sort((a, b) => b.gross_margin_dollars - a.gross_margin_dollars);
 
-    // 8. Get prior week snapshot for change calculation
+    // 9. Get prior week snapshot for change calculation
     const priorWeekStart = this.getPriorWeekStart(weekStart);
     const priorSnapshot = await databaseService.getPriorWeekSnapshot(priorWeekStart);
     const priorRankMap = new Map(
       priorSnapshot.map(s => [s.recruiter_user_id, s.rank])
     );
 
-    // 9. Build final ranked rows
+    // 10. Build final ranked rows
     const rows: StackRankingRow[] = unranked.map((row, index) => {
       const rank = index + 1;
       const priorRank = priorRankMap.get(row.recruiter_user_id) ?? null;
@@ -113,7 +197,7 @@ class StackRankingService {
       };
     });
 
-    // 10. Compute totals
+    // 11. Compute totals
     const totals: StackRankingTotals = {
       total_head_count: rows.reduce((sum, r) => sum + r.head_count, 0),
       total_gm_dollars: Math.round(rows.reduce((sum, r) => sum + r.gross_margin_dollars, 0) * 100) / 100,
@@ -125,7 +209,7 @@ class StackRankingService {
         ? Math.round((totals.total_gm_dollars / totals.total_revenue) * 100 * 100) / 100
         : 0;
 
-    // 11. Save this week's snapshot
+    // 12. Save this week's snapshot
     await databaseService.saveStackRankingSnapshot(weekStart, rows);
 
     return { rows, totals };
