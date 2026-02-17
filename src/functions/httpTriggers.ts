@@ -570,6 +570,8 @@ app.http('adminPortal', {
     .btn-success:hover { background: #059669; }
     .form-group { margin-bottom: 1rem; }
     .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #374151; }
+    .checkbox-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; margin: 0; cursor: pointer; }
     .form-group input, .form-group select { width: 100%; padding: 0.625rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem; }
     .form-group input:focus, .form-group select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
@@ -863,16 +865,16 @@ app.http('adminPortal', {
             <input type="number" id="edit-order" value="99" min="0">
           </div>
         </div>
-        <div class="form-row">
+        <div class="form-row" style="margin-top: 0.5rem;">
           <div class="form-group">
-            <label><input type="checkbox" id="edit-hours-report"> On Hours Report</label>
+            <label class="checkbox-label"><input type="checkbox" id="edit-hours-report"> On Hours Report</label>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="edit-stack-ranking"> On Stack Ranking</label>
+            <label class="checkbox-label"><input type="checkbox" id="edit-stack-ranking"> On Stack Ranking</label>
           </div>
         </div>
         <div class="form-group">
-          <label><input type="checkbox" id="edit-active" checked> Active</label>
+          <label class="checkbox-label"><input type="checkbox" id="edit-active" checked> Active</label>
         </div>
         <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1248,22 +1250,26 @@ app.http('adminPortal', {
         var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
         var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
+        var numStyle = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;';
+        var hdrRight = 'text-align:right;';
+
         var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
-        html += '<table><thead><tr><th>Name</th><th>Division</th><th>HC</th><th>Total Bill</th><th>Total Pay</th><th>GP$</th><th>GM%</th></tr></thead><tbody>';
+        html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:20%"><col style="width:15%"><col style="width:7%"><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:10%"></colgroup>';
+        html += '<thead><tr><th>Name</th><th>Division</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GP$</th><th style="' + hdrRight + '">GM%</th></tr></thead><tbody>';
         rows.forEach(function(r) {
           html += '<tr><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
-            '<td style="text-align:right">' + r.head_count + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.total_bill) + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.total_pay) + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
-            '<td style="text-align:right">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
+            '<td style="' + numStyle + '">' + r.head_count + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
         });
         html += '<tr style="font-weight:bold;background:#f0f0f0;"><td>TOTALS</td><td></td>' +
-          '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_bill) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_pay) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_gp_dollars) + '</td>' +
-          '<td style="text-align:right">' + fmtPct(totals.overall_gm_pct) + '</td></tr>';
+          '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_gp_dollars) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtPct(totals.overall_gm_pct) + '</td></tr>';
         html += '</tbody></table>';
         results.innerHTML = html;
       } catch (err) {
