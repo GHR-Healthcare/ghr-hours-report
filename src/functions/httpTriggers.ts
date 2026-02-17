@@ -599,6 +599,12 @@ app.http('adminPortal', {
     .email-option h4 { margin-bottom: 0.5rem; }
     .email-option p { font-size: 0.875rem; color: #6b7280; }
     .preview-frame { border: 1px solid #e5e7eb; border-radius: 8px; height: 500px; width: 100%; }
+    .sub-tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid #e5e7eb; }
+    .sub-tab { padding: 0.5rem 1.25rem; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 0.9rem; color: #6b7280; font-weight: 500; transition: all 0.2s; }
+    .sub-tab:hover { color: #374151; }
+    .sub-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+    .sub-panel { display: none; }
+    .sub-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -620,39 +626,50 @@ app.http('adminPortal', {
     <!-- Hours Report Panel -->
     <div class="panel active" id="hours-report-panel">
       <h2>Hours Report</h2>
-
-      <div class="card">
-        <h3>Recalculate</h3>
-        <p style="color: #6b7280; margin-bottom: 1rem;">Re-fetch hours from orders for last week, this week, and next week.</p>
-        <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
-        <div id="calc-results" style="margin-top: 1rem;"></div>
+      <div class="sub-tabs">
+        <button class="sub-tab active" data-subtab="hr-recalc" data-group="hr">Recalculate</button>
+        <button class="sub-tab" data-subtab="hr-preview" data-group="hr">Preview</button>
+        <button class="sub-tab" data-subtab="hr-email" data-group="hr">Email</button>
       </div>
 
-      <div class="card">
-        <h3>Preview Report</h3>
-        <button class="btn btn-secondary" onclick="loadPreview(true)">Preview Report</button>
-        <iframe id="preview-frame" class="preview-frame" style="margin-top: 1rem;"></iframe>
-      </div>
-
-      <div class="card">
-        <h3>Send Email</h3>
-        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-          <button class="btn btn-primary" onclick="sendLiveEmail('daily')">Send Daily Report to All</button>
-          <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">Send Monday Recap to All</button>
+      <div class="sub-panel active" id="hr-recalc">
+        <div class="card">
+          <h3>Recalculate</h3>
+          <p style="color: #6b7280; margin-bottom: 1rem;">Re-fetch hours from orders for last week, this week, and next week.</p>
+          <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
+          <div id="calc-results" style="margin-top: 1rem;"></div>
         </div>
-        <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
-        <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <input type="email" id="test-email-recipient" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
-          <div class="email-options" style="margin:0;">
-            <div class="email-option selected" data-type="daily" onclick="selectEmailType('daily')" style="padding:0.5rem 1rem;">
-              <strong>Daily</strong>
-            </div>
-            <div class="email-option" data-type="monday" onclick="selectEmailType('monday')" style="padding:0.5rem 1rem;">
-              <strong>Monday</strong>
-            </div>
+      </div>
+
+      <div class="sub-panel" id="hr-preview">
+        <div class="card">
+          <h3>Preview Report</h3>
+          <button class="btn btn-secondary" onclick="loadPreview(true)">Preview Report</button>
+          <iframe id="preview-frame" class="preview-frame" style="margin-top: 1rem;"></iframe>
+        </div>
+      </div>
+
+      <div class="sub-panel" id="hr-email">
+        <div class="card">
+          <h3>Send Email</h3>
+          <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+            <button class="btn btn-primary" onclick="sendLiveEmail('daily')">Send Daily Report to All</button>
+            <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">Send Monday Recap to All</button>
           </div>
-          <button class="btn btn-secondary" onclick="sendTestEmail()" id="send-test-btn">Send Test</button>
+          <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+          <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="email" id="test-email-recipient" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+            <div class="email-options" style="margin:0;">
+              <div class="email-option selected" data-type="daily" onclick="selectEmailType('daily')" style="padding:0.5rem 1rem;">
+                <strong>Daily</strong>
+              </div>
+              <div class="email-option" data-type="monday" onclick="selectEmailType('monday')" style="padding:0.5rem 1rem;">
+                <strong>Monday</strong>
+              </div>
+            </div>
+            <button class="btn btn-secondary" onclick="sendTestEmail()" id="send-test-btn">Send Test</button>
+          </div>
         </div>
       </div>
     </div>
@@ -661,31 +678,52 @@ app.http('adminPortal', {
     <div class="panel" id="stack-ranking-panel">
       <h2>Stack Ranking</h2>
       <p style="color: #6b7280; margin-bottom: 1rem;">Data is typically ~2 weeks behind (Sun-Sat billing cycle).</p>
-
-      <div class="card">
-        <h3>Calculate Ranking</h3>
-        <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
-          <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
-          <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-          <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
-          <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-          <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
-          <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
-        </div>
-        <div id="sr-results"></div>
-        <iframe id="sr-preview-frame" class="preview-frame" style="display:none;margin-top:1rem;"></iframe>
+      <div class="sub-tabs">
+        <button class="sub-tab active" data-subtab="sr-recalc" data-group="sr">Recalculate</button>
+        <button class="sub-tab" data-subtab="sr-preview" data-group="sr">Preview</button>
+        <button class="sub-tab" data-subtab="sr-email" data-group="sr">Email</button>
       </div>
 
-      <div class="card">
-        <h3>Send Stack Ranking Email</h3>
-        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-          <button class="btn btn-primary" onclick="sendStackRankingEmail()">Send to All Recipients</button>
+      <div class="sub-panel active" id="sr-recalc">
+        <div class="card">
+          <h3>Calculate Ranking</h3>
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+            <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+            <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+            <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+            <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+            <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
+          </div>
+          <div id="sr-results"></div>
         </div>
-        <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
-        <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <input type="email" id="sr-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
-          <button class="btn btn-secondary" onclick="sendStackRankingTestEmail()" id="sr-send-test-btn">Send Test</button>
+      </div>
+
+      <div class="sub-panel" id="sr-preview">
+        <div class="card">
+          <h3>Preview Report</h3>
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+            <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+            <input type="date" id="sr-prev-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+            <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+            <input type="date" id="sr-prev-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+            <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
+          </div>
+          <iframe id="sr-preview-frame" class="preview-frame" style="margin-top:1rem;"></iframe>
+        </div>
+      </div>
+
+      <div class="sub-panel" id="sr-email">
+        <div class="card">
+          <h3>Send Stack Ranking Email</h3>
+          <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+            <button class="btn btn-primary" onclick="sendStackRankingEmail()">Send to All Recipients</button>
+          </div>
+          <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+          <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="email" id="sr-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+            <button class="btn btn-secondary" onclick="sendStackRankingTestEmail()" id="sr-send-test-btn">Send Test</button>
+          </div>
         </div>
       </div>
     </div>
@@ -820,6 +858,24 @@ app.http('adminPortal', {
         }
         if (tab.dataset.tab === 'user-admin') {
           loadUsers();
+        }
+      });
+    });
+
+    // Sub-tab switching
+    document.querySelectorAll('.sub-tab').forEach(function(stab) {
+      stab.addEventListener('click', function() {
+        var group = stab.dataset.group;
+        document.querySelectorAll('.sub-tab[data-group="' + group + '"]').forEach(function(t) { t.classList.remove('active'); });
+        stab.classList.add('active');
+        // Hide all sub-panels in this group's parent panel
+        var parentPanel = stab.closest('.panel');
+        parentPanel.querySelectorAll('.sub-panel').forEach(function(p) { p.classList.remove('active'); });
+        document.getElementById(stab.dataset.subtab).classList.add('active');
+
+        // Sync dates when switching SR sub-tabs
+        if (group === 'sr') {
+          syncSRDates();
         }
       });
     });
@@ -976,25 +1032,47 @@ app.http('adminPortal', {
 
     // =========== STACK RANKING ===========
 
+    function getDefaultSRDates() {
+      var now = new Date();
+      var dayOfWeek = now.getDay();
+      var thisSun = new Date(now);
+      thisSun.setDate(now.getDate() - dayOfWeek);
+      var targetSun = new Date(thisSun);
+      targetSun.setDate(thisSun.getDate() - 14);
+      var targetSat = new Date(targetSun);
+      targetSat.setDate(targetSun.getDate() + 6);
+      return { weekStart: targetSun.toISOString().split('T')[0], weekEnd: targetSat.toISOString().split('T')[0] };
+    }
+
     function getStackRankingDates() {
       var weekStart = document.getElementById('sr-week-start').value;
       var weekEnd = document.getElementById('sr-week-end').value;
       if (!weekStart || !weekEnd) {
-        var now = new Date();
-        var dayOfWeek = now.getDay();
-        var thisSun = new Date(now);
-        thisSun.setDate(now.getDate() - dayOfWeek);
-        // Default ~2 weeks back
-        var targetSun = new Date(thisSun);
-        targetSun.setDate(thisSun.getDate() - 14);
-        var targetSat = new Date(targetSun);
-        targetSat.setDate(targetSun.getDate() + 6);
-        weekStart = targetSun.toISOString().split('T')[0];
-        weekEnd = targetSat.toISOString().split('T')[0];
+        var defaults = getDefaultSRDates();
+        weekStart = defaults.weekStart;
+        weekEnd = defaults.weekEnd;
         document.getElementById('sr-week-start').value = weekStart;
         document.getElementById('sr-week-end').value = weekEnd;
+        document.getElementById('sr-prev-week-start').value = weekStart;
+        document.getElementById('sr-prev-week-end').value = weekEnd;
       }
       return { weekStart: weekStart, weekEnd: weekEnd };
+    }
+
+    function syncSRDates() {
+      // Sync dates across all SR sub-tab date pickers
+      var recalcStart = document.getElementById('sr-week-start').value;
+      var recalcEnd = document.getElementById('sr-week-end').value;
+      var prevStart = document.getElementById('sr-prev-week-start').value;
+      var prevEnd = document.getElementById('sr-prev-week-end').value;
+      // Use whichever has values; prefer recalc
+      if (recalcStart && recalcEnd) {
+        document.getElementById('sr-prev-week-start').value = recalcStart;
+        document.getElementById('sr-prev-week-end').value = recalcEnd;
+      } else if (prevStart && prevEnd) {
+        document.getElementById('sr-week-start').value = prevStart;
+        document.getElementById('sr-week-end').value = prevEnd;
+      }
     }
 
     async function loadStackRanking() {
@@ -1036,10 +1114,17 @@ app.http('adminPortal', {
     }
 
     function previewStackRankingHtml() {
-      var dates = getStackRankingDates();
+      var weekStart = document.getElementById('sr-prev-week-start').value;
+      var weekEnd = document.getElementById('sr-prev-week-end').value;
+      if (!weekStart || !weekEnd) {
+        var defaults = getDefaultSRDates();
+        weekStart = defaults.weekStart;
+        weekEnd = defaults.weekEnd;
+        document.getElementById('sr-prev-week-start').value = weekStart;
+        document.getElementById('sr-prev-week-end').value = weekEnd;
+      }
       var frame = document.getElementById('sr-preview-frame');
-      frame.style.display = 'block';
-      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd;
+      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + weekStart + '&weekEnd=' + weekEnd;
     }
 
     async function sendStackRankingEmail() {
