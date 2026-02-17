@@ -19,11 +19,6 @@ export interface RecruiterConfig {
   weekly_goal: number;
   display_order: number;
   is_active: boolean;
-  role: RecruiterRole;
-  title: string | null;
-  ats_source: string | null;
-  on_hours_report: boolean;
-  on_stack_ranking: boolean;
   created_at: Date;
   modified_at: Date;
 }
@@ -129,11 +124,6 @@ export interface CreateRecruiterRequest {
   division_id: number;
   weekly_goal: number;
   display_order?: number;
-  role?: RecruiterRole;
-  title?: string;
-  ats_source?: string;
-  on_hours_report?: boolean;
-  on_stack_ranking?: boolean;
 }
 
 export interface UpdateRecruiterRequest {
@@ -143,10 +133,51 @@ export interface UpdateRecruiterRequest {
   weekly_goal?: number;
   display_order?: number;
   is_active?: boolean;
+}
+
+// Unified User Config (single table for both reports)
+
+export interface UserConfig {
+  config_id: number;
+  user_id: number;
+  user_name: string;
+  division_id: number;
+  role: RecruiterRole;
+  title: string | null;
+  ats_source: string | null;
+  weekly_goal: number;
+  on_hours_report: boolean;
+  on_stack_ranking: boolean;
+  is_active: boolean;
+  display_order: number;
+  created_at: Date;
+  modified_at: Date;
+}
+
+export interface CreateUserConfigRequest {
+  user_id: number;
+  user_name: string;
+  division_id: number;
   role?: RecruiterRole;
   title?: string;
+  ats_source?: string;
+  weekly_goal?: number;
   on_hours_report?: boolean;
   on_stack_ranking?: boolean;
+  display_order?: number;
+}
+
+export interface UpdateUserConfigRequest {
+  config_id: number;
+  user_name?: string;
+  division_id?: number;
+  role?: RecruiterRole;
+  title?: string;
+  weekly_goal?: number;
+  on_hours_report?: boolean;
+  on_stack_ranking?: boolean;
+  is_active?: boolean;
+  display_order?: number;
 }
 
 // Stack Ranking Types

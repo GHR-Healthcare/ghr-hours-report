@@ -285,9 +285,8 @@ app.http('calculateWeekly', {
       // Get active, non-deleted recruiters only
       const activeRecruiters = await databaseService.getRecruiters(false);
       const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
-      const hoursReportUserIds = new Set(activeRecruiters.filter(r => r.on_hours_report).map(r => r.user_id));
       const recruiterNames = new Map(activeRecruiters.map(r => [r.user_id, r.user_name]));
-      context.log(`Found ${activeUserIds.size} active recruiters, ${hoursReportUserIds.size} on hours report`);
+      context.log(`Found ${activeUserIds.size} active recruiters`);
       
       const results: any = {
         lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
@@ -335,14 +334,11 @@ app.http('calculateWeekly', {
                   user_name: name,
                   division_id: 1,
                   weekly_goal: 0,
-                  display_order: 99,
-                  on_hours_report: true,
-                  on_stack_ranking: false,
+                  display_order: 99
                 });
 
                 // Add to active set so their hours get counted
                 activeUserIds.add(userId);
-                hoursReportUserIds.add(userId);
                 recruiterNames.set(userId, name);
                 newRecruiters.push({ userId, name });
                 context.log(`Auto-added recruiter: ${name} (ID: ${userId})`);
@@ -353,12 +349,12 @@ app.http('calculateWeekly', {
           }
         }
         
-        // Round and save snapshots - ONLY for on_hours_report recruiters
+        // Round and save snapshots - ONLY for active recruiters
         let totalHoursForWeek = 0;
         const recruiterDetails: any[] = [];
 
         for (const [userId, hours] of hoursByRecruiter) {
-          if (hoursReportUserIds.has(userId)) {
+          if (activeUserIds.has(userId)) {
             const roundedHours = Math.round(hours * 100) / 100;
             const lunchMinutes = Math.round(lunchMinutesMap.get(userId) || 0);
             totalHoursForWeek += roundedHours;
@@ -613,24 +609,113 @@ app.http('adminPortal', {
 
   <div class="container">
     <div class="tabs">
-      <button class="tab active" data-tab="recruiters">Recruiters</button>
-      <button class="tab" data-tab="email">Test Email</button>
-      <button class="tab" data-tab="preview">Preview Report</button>
-      <button class="tab" data-tab="calculate">Recalculate</button>
+      <button class="tab active" data-tab="hours-report">Hours Report</button>
       <button class="tab" data-tab="stack-ranking">Stack Ranking</button>
+      <button class="tab" data-tab="financials">Financials</button>
+      <button class="tab" data-tab="user-admin">User Admin</button>
     </div>
 
     <div id="alert"></div>
 
-    <!-- Recruiters Panel -->
-    <div class="panel active" id="recruiters-panel">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2>Manage Recruiters</h2>
-        <button class="btn btn-primary" onclick="openAddRecruiterModal()">+ Add Recruiter</button>
+    <!-- Hours Report Panel -->
+    <div class="panel active" id="hours-report-panel">
+      <h2>Hours Report</h2>
+
+      <div class="card">
+        <h3>Recalculate</h3>
+        <p style="color: #6b7280; margin-bottom: 1rem;">Re-fetch hours from orders for last week, this week, and next week.</p>
+        <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
+        <div id="calc-results" style="margin-top: 1rem;"></div>
       </div>
-      
-      <div class="stats" id="recruiter-stats"></div>
-      
+
+      <div class="card">
+        <h3>Preview Report</h3>
+        <button class="btn btn-secondary" onclick="loadPreview(true)">Preview Report</button>
+        <iframe id="preview-frame" class="preview-frame" style="margin-top: 1rem;"></iframe>
+      </div>
+
+      <div class="card">
+        <h3>Send Email</h3>
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+          <button class="btn btn-primary" onclick="sendLiveEmail('daily')">Send Daily Report to All</button>
+          <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">Send Monday Recap to All</button>
+        </div>
+        <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+        <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="email" id="test-email-recipient" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+          <div class="email-options" style="margin:0;">
+            <div class="email-option selected" data-type="daily" onclick="selectEmailType('daily')" style="padding:0.5rem 1rem;">
+              <strong>Daily</strong>
+            </div>
+            <div class="email-option" data-type="monday" onclick="selectEmailType('monday')" style="padding:0.5rem 1rem;">
+              <strong>Monday</strong>
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="sendTestEmail()" id="send-test-btn">Send Test</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stack Ranking Panel -->
+    <div class="panel" id="stack-ranking-panel">
+      <h2>Stack Ranking</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem;">Data is typically ~2 weeks behind (Sun-Sat billing cycle).</p>
+
+      <div class="card">
+        <h3>Calculate Ranking</h3>
+        <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+          <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+          <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
+          <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
+        </div>
+        <div id="sr-results"></div>
+        <iframe id="sr-preview-frame" class="preview-frame" style="display:none;margin-top:1rem;"></iframe>
+      </div>
+
+      <div class="card">
+        <h3>Send Stack Ranking Email</h3>
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+          <button class="btn btn-primary" onclick="sendStackRankingEmail()">Send to All Recipients</button>
+        </div>
+        <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+        <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="email" id="sr-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+          <button class="btn btn-secondary" onclick="sendStackRankingTestEmail()" id="sr-send-test-btn">Send Test</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Financials Panel -->
+    <div class="panel" id="financials-panel">
+      <h2>Financials</h2>
+      <p style="color: #6b7280; margin-bottom: 1rem;">View pay/bill data by user. Uses the same placement data as stack ranking.</p>
+
+      <div class="card">
+        <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+          <input type="date" id="fin-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+          <input type="date" id="fin-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button class="btn btn-primary" onclick="loadFinancials()">Load Data</button>
+        </div>
+        <div id="fin-results"></div>
+      </div>
+    </div>
+
+    <!-- User Admin Panel -->
+    <div class="panel" id="user-admin-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2>User Admin</h2>
+        <button class="btn btn-primary" onclick="openAddUserModal()">+ Add User</button>
+      </div>
+
+      <div class="stats" id="user-stats"></div>
+
       <table>
         <thead>
           <tr>
@@ -640,114 +725,37 @@ app.http('adminPortal', {
             <th>Role</th>
             <th>Division</th>
             <th>Weekly Goal</th>
-            <th>Display Order</th>
-            <th>ATS</th>
             <th>Hours Rpt</th>
             <th>Stack Rank</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
-        <tbody id="recruiters-table"></tbody>
+        <tbody id="users-table"></tbody>
       </table>
-    </div>
-
-    <!-- Email Panel -->
-    <div class="panel" id="email-panel">
-      <h2>Send Email Report</h2>
-      
-      <div style="margin-bottom: 2rem; padding: 1rem; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
-        <h3 style="margin: 0 0 1rem 0; color: #0369a1;">Send to All Recipients</h3>
-        <p style="color: #6b7280; margin-bottom: 1rem;">Send the report to all configured recipients (same as scheduled emails).</p>
-        <div style="display: flex; gap: 1rem;">
-          <button class="btn btn-primary" onclick="sendLiveEmail('daily')">📊 Send Daily Report</button>
-          <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">📅 Send Monday Recap</button>
-        </div>
-      </div>
-      
-      <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e5e7eb;">
-      
-      <h3>Send Test Email</h3>
-      <p style="color: #6b7280; margin-bottom: 1.5rem;">Send a test email to yourself before sending to the whole team.</p>
-      
-      <div class="form-group">
-        <label>Recipient Email</label>
-        <input type="email" id="test-email-recipient" placeholder="your.email@ghrhealthcare.com">
-      </div>
-      
-      <div class="email-options">
-        <div class="email-option selected" data-type="daily" onclick="selectEmailType('daily')">
-          <h4>📊 Daily Report</h4>
-          <p>Standard daily email sent at 8am, 12pm, 5pm</p>
-        </div>
-        <div class="email-option" data-type="monday" onclick="selectEmailType('monday')">
-          <h4>📅 Monday Report</h4>
-          <p>Includes last week summary (sent Monday mornings)</p>
-        </div>
-      </div>
-      
-      <button class="btn btn-secondary" onclick="sendTestEmail()" id="send-test-btn">Send Test Email</button>
-    </div>
-
-    <!-- Preview Panel -->
-    <div class="panel" id="preview-panel">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2>Report Preview</h2>
-        <div>
-          <button class="btn btn-secondary" onclick="loadPreview(true)">Preview Report</button>
-        </div>
-      </div>
-      <iframe id="preview-frame" class="preview-frame"></iframe>
-    </div>
-
-    <!-- Calculate Panel -->
-    <div class="panel" id="calculate-panel">
-      <h2>Recalculate Weekly Hours</h2>
-      <p style="color: #6b7280; margin-bottom: 1.5rem;">Re-fetch hours from ClearConnect for last week, this week, and next week. Use this if data looks incorrect or to refresh before sending a test email.</p>
-      
-      <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
-      
-      <div id="calc-results" style="margin-top: 1.5rem;"></div>
-    </div>
-
-    <!-- Stack Ranking Panel -->
-    <div class="panel" id="stack-ranking-panel">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2>Stack Ranking</h2>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
-          <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-          <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
-          <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-          <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
-          <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
-        </div>
-      </div>
-      <div id="sr-results"></div>
-      <iframe id="sr-preview-frame" class="preview-frame" style="display:none;"></iframe>
     </div>
   </div>
 
-  <!-- Add/Edit Recruiter Modal -->
-  <div class="modal" id="recruiter-modal">
+  <!-- Add/Edit User Modal -->
+  <div class="modal" id="user-modal">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 id="modal-title">Add Recruiter</h2>
+        <h2 id="modal-title">Add User</h2>
         <button class="modal-close" onclick="closeModal()">&times;</button>
       </div>
-      <form id="recruiter-form">
+      <form id="user-form">
         <input type="hidden" id="edit-config-id">
         <div class="form-group">
           <label>Name</label>
           <input type="text" id="edit-name" required>
         </div>
         <div class="form-group">
-          <label>User ID (from ClearConnect)</label>
+          <label>User ID</label>
           <input type="number" id="edit-user-id" required>
         </div>
         <div class="form-group">
-          <label>Division</label>
-          <select id="edit-division"></select>
+          <label>Title</label>
+          <input type="text" id="edit-title">
         </div>
         <div class="form-group">
           <label>Role</label>
@@ -758,8 +766,8 @@ app.http('adminPortal', {
           </select>
         </div>
         <div class="form-group">
-          <label>Title (from ATS)</label>
-          <input type="text" id="edit-title" placeholder="e.g. Staffing Specialist, Account Executive">
+          <label>Division</label>
+          <select id="edit-division"></select>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -773,20 +781,14 @@ app.http('adminPortal', {
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>
-              <input type="checkbox" id="edit-on-hours-report" checked> On Hours Report
-            </label>
+            <label><input type="checkbox" id="edit-hours-report"> On Hours Report</label>
           </div>
           <div class="form-group">
-            <label>
-              <input type="checkbox" id="edit-on-stack-ranking"> On Stack Ranking
-            </label>
+            <label><input type="checkbox" id="edit-stack-ranking"> On Stack Ranking</label>
           </div>
         </div>
         <div class="form-group">
-          <label>
-            <input type="checkbox" id="edit-active" checked> Active
-          </label>
+          <label><input type="checkbox" id="edit-active" checked> Active</label>
         </div>
         <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -799,7 +801,7 @@ app.http('adminPortal', {
   <script>
     const API_BASE = window.location.origin + '/api';
     let divisions = [];
-    let recruiters = [];
+    let users = [];
     let selectedEmailType = 'daily';
 
     // Tab switching
@@ -809,192 +811,64 @@ app.http('adminPortal', {
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         tab.classList.add('active');
         document.getElementById(tab.dataset.tab + '-panel').classList.add('active');
-        
-        if (tab.dataset.tab === 'preview') {
-          loadPreview(true);
-        }
+
         if (tab.dataset.tab === 'stack-ranking') {
           getStackRankingDates();
+        }
+        if (tab.dataset.tab === 'financials') {
+          getFinancialsDates();
+        }
+        if (tab.dataset.tab === 'user-admin') {
+          loadUsers();
         }
       });
     });
 
     // Alert display
-    function showAlert(message, type = 'success') {
-      const alert = document.getElementById('alert');
-      alert.innerHTML = '<div class="alert alert-' + type + '">' + message + '</div>';
-      setTimeout(() => alert.innerHTML = '', 5000);
+    function showAlert(message, type) {
+      type = type || 'success';
+      var alertEl = document.getElementById('alert');
+      alertEl.innerHTML = '<div class="alert alert-' + type + '">' + message + '</div>';
+      setTimeout(function() { alertEl.innerHTML = ''; }, 5000);
     }
 
     // Load divisions
     async function loadDivisions() {
       const res = await fetch(API_BASE + '/divisions');
       divisions = await res.json();
-      
       const select = document.getElementById('edit-division');
-      select.innerHTML = divisions.map(d => 
-        '<option value="' + d.division_id + '">' + d.division_name + '</option>'
-      ).join('');
-    }
-
-    // Load recruiters
-    async function loadRecruiters() {
-      const res = await fetch(API_BASE + '/recruiters?includeInactive=true');
-      recruiters = await res.json();
-      
-      const tbody = document.getElementById('recruiters-table');
-      tbody.innerHTML = recruiters.map(r => {
-        const div = divisions.find(d => d.division_id === r.division_id);
-        const roleLabel = r.role === 'account_manager' ? 'Account Manager' : r.role === 'recruiter' ? 'Recruiter' : 'Unknown';
-        const roleBadgeClass = r.role === 'unknown' ? 'badge-inactive' : 'badge-active';
-        return '<tr>' +
-          '<td><strong>' + r.user_name + '</strong></td>' +
-          '<td>' + r.user_id + '</td>' +
-          '<td>' + (r.title || '<span style="color:#9ca3af">—</span>') + '</td>' +
-          '<td><span class="badge ' + roleBadgeClass + '">' + roleLabel + '</span></td>' +
-          '<td>' + (div ? div.division_name : 'Unknown') + '</td>' +
-          '<td>' + r.weekly_goal + '</td>' +
-          '<td>' + r.display_order + '</td>' +
-          '<td>' + (r.ats_source || '<span style="color:#9ca3af">—</span>') + '</td>' +
-          '<td style="text-align:center">' + (r.on_hours_report ? '<span style="color:#10b981;font-weight:bold">Yes</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
-          '<td style="text-align:center">' + (r.on_stack_ranking ? '<span style="color:#10b981;font-weight:bold">Yes</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
-          '<td><span class="badge ' + (r.is_active ? 'badge-active' : 'badge-inactive') + '">' +
-            (r.is_active ? 'Active' : 'Inactive') + '</span></td>' +
-          '<td class="actions">' +
-            '<button class="btn btn-secondary" onclick="editRecruiter(' + r.config_id + ')">Edit</button>' +
-            '<button class="btn btn-danger" onclick="deleteRecruiter(' + r.config_id + ', \\'' + r.user_name.replace(/'/g, "\\\\'") + '\\')">Delete</button>' +
-          '</td>' +
-        '</tr>';
+      select.innerHTML = divisions.map(function(d) {
+        return '<option value="' + d.division_id + '">' + d.division_name + '</option>';
       }).join('');
-      
-      // Update stats
-      const active = recruiters.filter(r => r.is_active).length;
-      const totalGoal = recruiters.filter(r => r.is_active).reduce((sum, r) => sum + r.weekly_goal, 0);
-      document.getElementById('recruiter-stats').innerHTML = 
-        '<div class="stat"><div class="stat-value">' + active + '</div><div class="stat-label">Active Recruiters</div></div>' +
-        '<div class="stat"><div class="stat-value">' + (recruiters.length - active) + '</div><div class="stat-label">Inactive</div></div>' +
-        '<div class="stat"><div class="stat-value">' + totalGoal.toLocaleString() + '</div><div class="stat-label">Total Weekly Goal</div></div>';
     }
 
-    // Modal functions
-    function openAddRecruiterModal() {
-      document.getElementById('modal-title').textContent = 'Add Recruiter';
-      document.getElementById('recruiter-form').reset();
-      document.getElementById('edit-config-id').value = '';
-      document.getElementById('edit-role').value = 'recruiter';
-      document.getElementById('edit-title').value = '';
-      document.getElementById('edit-on-hours-report').checked = true;
-      document.getElementById('edit-on-stack-ranking').checked = false;
-      document.getElementById('edit-active').checked = true;
-      document.getElementById('recruiter-modal').classList.add('active');
-    }
+    // =========== HOURS REPORT ===========
 
-    function editRecruiter(configId) {
-      const r = recruiters.find(rec => rec.config_id === configId);
-      if (!r) return;
-
-      document.getElementById('modal-title').textContent = 'Edit Recruiter';
-      document.getElementById('edit-config-id').value = r.config_id;
-      document.getElementById('edit-name').value = r.user_name;
-      document.getElementById('edit-user-id').value = r.user_id;
-      document.getElementById('edit-division').value = r.division_id;
-      document.getElementById('edit-role').value = r.role || 'unknown';
-      document.getElementById('edit-title').value = r.title || '';
-      document.getElementById('edit-on-hours-report').checked = r.on_hours_report !== false;
-      document.getElementById('edit-on-stack-ranking').checked = r.on_stack_ranking === true;
-      document.getElementById('edit-goal').value = r.weekly_goal;
-      document.getElementById('edit-order').value = r.display_order;
-      document.getElementById('edit-active').checked = r.is_active;
-      document.getElementById('recruiter-modal').classList.add('active');
-    }
-
-    function closeModal() {
-      document.getElementById('recruiter-modal').classList.remove('active');
-    }
-
-    // Save recruiter
-    document.getElementById('recruiter-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      
-      const configId = document.getElementById('edit-config-id').value;
-      const data = {
-        user_name: document.getElementById('edit-name').value,
-        user_id: parseInt(document.getElementById('edit-user-id').value),
-        division_id: parseInt(document.getElementById('edit-division').value),
-        role: document.getElementById('edit-role').value,
-        title: document.getElementById('edit-title').value || undefined,
-        on_hours_report: document.getElementById('edit-on-hours-report').checked,
-        on_stack_ranking: document.getElementById('edit-on-stack-ranking').checked,
-        weekly_goal: parseInt(document.getElementById('edit-goal').value) || 0,
-        display_order: parseInt(document.getElementById('edit-order').value) || 99,
-        is_active: document.getElementById('edit-active').checked
-      };
-      
-      try {
-        if (configId) {
-          await fetch(API_BASE + '/recruiters/' + configId, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-          });
-          showAlert('Recruiter updated successfully');
-        } else {
-          await fetch(API_BASE + '/recruiters', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-          });
-          showAlert('Recruiter added successfully');
-        }
-        closeModal();
-        loadRecruiters();
-      } catch (err) {
-        showAlert('Error saving recruiter: ' + err.message, 'error');
-      }
-    });
-
-    // Delete recruiter
-    async function deleteRecruiter(configId, name) {
-      if (!confirm('Are you sure you want to delete ' + name + '?')) return;
-      
-      try {
-        await fetch(API_BASE + '/recruiters/' + configId, { method: 'DELETE' });
-        showAlert('Recruiter deleted');
-        loadRecruiters();
-      } catch (err) {
-        showAlert('Error deleting recruiter: ' + err.message, 'error');
-      }
-    }
-
-    // Email functions
     function selectEmailType(type) {
       selectedEmailType = type;
-      document.querySelectorAll('.email-option').forEach(el => {
+      document.querySelectorAll('.email-option').forEach(function(el) {
         el.classList.toggle('selected', el.dataset.type === type);
       });
     }
 
     async function sendLiveEmail(type) {
-      const isMonday = type === 'monday';
-      const confirmMsg = isMonday 
-        ? 'Send the Monday Recap email to ALL configured recipients?' 
+      var confirmMsg = type === 'monday'
+        ? 'Send the Monday Recap email to ALL configured recipients?'
         : 'Send the Daily Report email to ALL configured recipients?';
-      
       if (!confirm(confirmMsg)) return;
-      
-      const btn = event.target;
-      const originalText = btn.textContent;
+
+      var btn = event.target;
+      var originalText = btn.textContent;
       btn.textContent = 'Sending...';
       btn.disabled = true;
-      
+
       try {
-        const res = await fetch(API_BASE + '/send-email', {
+        var res = await fetch(API_BASE + '/send-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ includeLastWeek: true, emailType: type })
         });
-        
-        const data = await res.json();
+        var data = await res.json();
         if (res.ok) {
           showAlert('Email sent to ' + data.recipients + ' recipients!');
         } else {
@@ -1009,28 +883,20 @@ app.http('adminPortal', {
     }
 
     async function sendTestEmail() {
-      const recipient = document.getElementById('test-email-recipient').value;
-      if (!recipient) {
-        showAlert('Please enter a recipient email', 'error');
-        return;
-      }
-      
-      const btn = document.getElementById('send-test-btn');
+      var recipient = document.getElementById('test-email-recipient').value;
+      if (!recipient) { showAlert('Please enter a recipient email', 'error'); return; }
+
+      var btn = document.getElementById('send-test-btn');
       btn.textContent = 'Sending...';
       btn.disabled = true;
-      
+
       try {
-        const res = await fetch(API_BASE + '/send-test-email', {
+        var res = await fetch(API_BASE + '/send-test-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipient: recipient,
-            includeLastWeek: true,
-            emailType: selectedEmailType
-          })
+          body: JSON.stringify({ recipient: recipient, includeLastWeek: true, emailType: selectedEmailType })
         });
-        
-        const data = await res.json();
+        var data = await res.json();
         if (res.ok) {
           showAlert('Test email sent to ' + recipient + ' (' + (selectedEmailType === 'monday' ? 'Monday Recap' : 'Daily Report') + ')');
         } else {
@@ -1039,102 +905,64 @@ app.http('adminPortal', {
       } catch (err) {
         showAlert('Error sending email: ' + err.message, 'error');
       } finally {
-        btn.textContent = 'Send Test Email';
+        btn.textContent = 'Send Test';
         btn.disabled = false;
       }
     }
 
-    // Preview
     function loadPreview(includeLastWeek) {
-      const frame = document.getElementById('preview-frame');
+      var frame = document.getElementById('preview-frame');
       frame.src = API_BASE + '/report/html?includeLastWeek=' + includeLastWeek + '&t=' + Date.now();
     }
 
-    // Render calculation results HTML
     function renderCalculationResults(data) {
-      let html = '<h3>Results</h3>';
+      var html = '<h4>Results</h4>';
       html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
-      html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
-      
+      html += '<p>Snapshot day: ' + data.snapshotDayName + '</p>';
       if (data.regionsWithFilledOrders && data.regionsWithFilledOrders.length > 0) {
-        html += '<p><strong>Regions with filled orders:</strong> ' + data.regionsWithFilledOrders.join(', ') + '</p>';
+        html += '<p><strong>Regions:</strong> ' + data.regionsWithFilledOrders.join(', ') + '</p>';
       }
-      
       if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
-        html += '<p style="color: #4CAF50;"><strong>New recruiters added:</strong> ' + 
-          data.newRecruitersAdded.map(r => r.name).join(', ') + '</p>';
+        html += '<p style="color:#4CAF50;"><strong>New users added:</strong> ' + data.newRecruitersAdded.map(function(r) { return r.name; }).join(', ') + '</p>';
       }
-      
-      // Summary table
-      html += '<h4 style="margin-top: 20px;">Weekly Summary</h4>';
-      html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Recruiters</th><th>Total Hours</th></tr></thead><tbody>';
-      for (const [weekName, weekData] of Object.entries(data.results)) {
-        const week = weekData;
-        html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' + 
+      html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Users</th><th>Total Hours</th></tr></thead><tbody>';
+      for (var weekName in data.results) {
+        var week = data.results[weekName];
+        html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' +
           week.totalOrders + '</td><td>' + week.recruiters.length + '</td><td><strong>' + week.totalHours.toLocaleString() + '</strong></td></tr>';
       }
       html += '</tbody></table>';
-      
-      // Detailed breakdown per week
-      for (const [weekName, weekData] of Object.entries(data.results)) {
-        const week = weekData;
-        if (week.recruiters && week.recruiters.length > 0) {
-          html += '<h4 style="margin-top: 20px;">' + weekName + ' - Hours by Recruiter</h4>';
-          html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th><th>Lunch Minutes Deducted</th></tr></thead><tbody>';
-          for (const r of week.recruiters) {
-            html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() +
-              '</td><td>' + (r.lunchMinutes || 0).toLocaleString() + ' min</td></tr>';
-          }
-          html += '</tbody></table>';
-        }
-      }
-      
       return html;
     }
 
-    // Load last calculation from localStorage
     function loadLastCalculation() {
-      const results = document.getElementById('calc-results');
-      const saved = localStorage.getItem('ghr-last-calculation');
+      var results = document.getElementById('calc-results');
+      var saved = localStorage.getItem('ghr-last-calculation');
       if (saved) {
-        try {
-          const data = JSON.parse(saved);
-          results.innerHTML = renderCalculationResults(data);
-        } catch (e) {
-          results.innerHTML = '<p>No previous calculation results.</p>';
-        }
+        try { results.innerHTML = renderCalculationResults(JSON.parse(saved)); }
+        catch (e) { results.innerHTML = '<p>No previous calculation results.</p>'; }
       } else {
-        results.innerHTML = '<p>No previous calculation results. Click "Run Weekly Calculation" to fetch data from ClearConnect.</p>';
+        results.innerHTML = '<p>No previous results. Click "Run Weekly Calculation" to fetch data.</p>';
       }
     }
 
-    // Calculation
     async function runCalculation() {
-      const btn = document.getElementById('calc-btn');
-      const results = document.getElementById('calc-results');
+      var btn = document.getElementById('calc-btn');
+      var results = document.getElementById('calc-results');
       btn.textContent = 'Running...';
       btn.disabled = true;
-      results.innerHTML = '<p>Calculating weekly hours... this may take several minutes. Please wait...</p>';
+      results.innerHTML = '<p>Calculating weekly hours... this may take several minutes.</p>';
 
       try {
-        // Increase timeout to 10 minutes for large datasets
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutes
-
-        const res = await fetch(API_BASE + '/calculate/weekly', {
-          signal: controller.signal
-        });
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function() { controller.abort(); }, 600000);
+        var res = await fetch(API_BASE + '/calculate/weekly', { signal: controller.signal });
         clearTimeout(timeoutId);
-
-        const data = await res.json();
-        
+        var data = await res.json();
         if (res.ok) {
-          // Save to localStorage
           localStorage.setItem('ghr-last-calculation', JSON.stringify(data));
-          
           results.innerHTML = renderCalculationResults(data);
           showAlert('Calculation complete!');
-          loadRecruiters();
         } else {
           results.innerHTML = '<p class="alert alert-error">Error: ' + (data.error || 'Unknown error') + '</p>';
         }
@@ -1146,78 +974,60 @@ app.http('adminPortal', {
       }
     }
 
-    // Stack Ranking
+    // =========== STACK RANKING ===========
+
     function getStackRankingDates() {
-      let weekStart = document.getElementById('sr-week-start').value;
-      let weekEnd = document.getElementById('sr-week-end').value;
+      var weekStart = document.getElementById('sr-week-start').value;
+      var weekEnd = document.getElementById('sr-week-end').value;
       if (!weekStart || !weekEnd) {
-        // Default to last week
-        const now = new Date();
-        const dayOfWeek = now.getDay();
-        const thisSun = new Date(now);
+        var now = new Date();
+        var dayOfWeek = now.getDay();
+        var thisSun = new Date(now);
         thisSun.setDate(now.getDate() - dayOfWeek);
-        const lastSun = new Date(thisSun);
-        lastSun.setDate(thisSun.getDate() - 7);
-        const lastSat = new Date(lastSun);
-        lastSat.setDate(lastSun.getDate() + 6);
-        weekStart = lastSun.toISOString().split('T')[0];
-        weekEnd = lastSat.toISOString().split('T')[0];
+        // Default ~2 weeks back
+        var targetSun = new Date(thisSun);
+        targetSun.setDate(thisSun.getDate() - 14);
+        var targetSat = new Date(targetSun);
+        targetSat.setDate(targetSun.getDate() + 6);
+        weekStart = targetSun.toISOString().split('T')[0];
+        weekEnd = targetSat.toISOString().split('T')[0];
         document.getElementById('sr-week-start').value = weekStart;
         document.getElementById('sr-week-end').value = weekEnd;
       }
-      return { weekStart, weekEnd };
+      return { weekStart: weekStart, weekEnd: weekEnd };
     }
 
     async function loadStackRanking() {
-      const { weekStart, weekEnd } = getStackRankingDates();
-      const results = document.getElementById('sr-results');
+      var dates = getStackRankingDates();
+      var results = document.getElementById('sr-results');
       document.getElementById('sr-preview-frame').style.display = 'none';
       results.innerHTML = '<p>Calculating stack ranking...</p>';
 
       try {
-        const res = await fetch(API_BASE + '/stack-ranking?weekStart=' + weekStart + '&weekEnd=' + weekEnd);
-        const data = await res.json();
+        var res = await fetch(API_BASE + '/stack-ranking?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd);
+        var data = await res.json();
+        if (data.error) { results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>'; return; }
 
-        if (data.error) {
-          results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>';
-          return;
-        }
+        var rows = data.rows || [];
+        var totals = data.totals || {};
+        var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+        var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
-        const rows = data.rows || [];
-        const totals = data.totals || {};
-        const fmtMoney = (n) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const fmtPct = (n) => (n || 0).toFixed(2) + '%';
-
-        let html = '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' recruiters ranked for ' + weekStart + ' to ' + weekEnd + '</p>';
-        html += '<table><thead><tr>' +
-          '<th>Rank</th><th>Recruiter</th><th>Division</th><th>HC</th>' +
-          '<th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior Rank</th>' +
-          '</tr></thead><tbody>';
-
+        var html = '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' ranked for ' + dates.weekStart + ' to ' + dates.weekEnd + '</p>';
+        html += '<table><thead><tr><th>Rank</th><th>Name</th><th>Division</th><th>HC</th><th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior</th></tr></thead><tbody>';
         rows.forEach(function(r) {
-          let change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
-          let prior = r.prior_week_rank !== null ? r.prior_week_rank : 'NEW';
-          html += '<tr>' +
-            '<td>' + r.rank + '</td>' +
-            '<td>' + r.recruiter_name + '</td>' +
-            '<td>' + r.division_name + '</td>' +
-            '<td style="text-align:right">' + r.head_count + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
-            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td>' +
-            '<td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
-            '<td style="text-align:center">' + change + '</td>' +
-            '<td style="text-align:center">' + prior + '</td>' +
-            '</tr>';
+          var change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
+          var prior = r.prior_week_rank !== null ? r.prior_week_rank : 'NEW';
+          html += '<tr><td>' + r.rank + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
+            '<td style="text-align:right">' + r.head_count + '</td><td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td><td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
+            '<td style="text-align:center">' + change + '</td><td style="text-align:center">' + prior + '</td></tr>';
         });
-
-        html += '<tr style="font-weight:bold;background:#f0f0f0;">' +
-          '<td></td><td>TOTALS</td><td></td>' +
+        html += '<tr style="font-weight:bold;background:#f0f0f0;"><td></td><td>TOTALS</td><td></td>' +
           '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
           '<td style="text-align:right">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
           '<td style="text-align:right">' + fmtPct(totals.overall_gp_pct) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td>' +
-          '<td></td><td></td></tr>';
-
+          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td><td></td><td></td></tr>';
         html += '</tbody></table>';
         results.innerHTML = html;
       } catch (err) {
@@ -1226,16 +1036,249 @@ app.http('adminPortal', {
     }
 
     function previewStackRankingHtml() {
-      const { weekStart, weekEnd } = getStackRankingDates();
-      const frame = document.getElementById('sr-preview-frame');
+      var dates = getStackRankingDates();
+      var frame = document.getElementById('sr-preview-frame');
       frame.style.display = 'block';
-      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + weekStart + '&weekEnd=' + weekEnd;
+      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd;
     }
+
+    async function sendStackRankingEmail() {
+      if (!confirm('Send the Stack Ranking email to ALL configured recipients?')) return;
+      var dates = getStackRankingDates();
+      try {
+        var res = await fetch(API_BASE + '/stack-ranking/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd })
+        });
+        var data = await res.json();
+        if (res.ok) { showAlert('Stack ranking email sent to ' + data.recipientCount + ' recipients!'); }
+        else { showAlert('Error: ' + (data.error || 'Unknown error'), 'error'); }
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+    }
+
+    async function sendStackRankingTestEmail() {
+      var recipient = document.getElementById('sr-test-email').value;
+      if (!recipient) { showAlert('Please enter a recipient email', 'error'); return; }
+      var btn = document.getElementById('sr-send-test-btn');
+      btn.textContent = 'Sending...';
+      btn.disabled = true;
+      var dates = getStackRankingDates();
+      try {
+        var res = await fetch(API_BASE + '/stack-ranking/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd, recipient: recipient })
+        });
+        var data = await res.json();
+        if (res.ok) { showAlert('Test email sent to ' + recipient); }
+        else { showAlert('Error: ' + (data.error || 'Unknown error'), 'error'); }
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+      finally { btn.textContent = 'Send Test'; btn.disabled = false; }
+    }
+
+    // =========== FINANCIALS ===========
+
+    function getFinancialsDates() {
+      var weekStart = document.getElementById('fin-week-start').value;
+      var weekEnd = document.getElementById('fin-week-end').value;
+      if (!weekStart || !weekEnd) {
+        var now = new Date();
+        var dayOfWeek = now.getDay();
+        var thisSun = new Date(now);
+        thisSun.setDate(now.getDate() - dayOfWeek);
+        var targetSun = new Date(thisSun);
+        targetSun.setDate(thisSun.getDate() - 14);
+        var targetSat = new Date(targetSun);
+        targetSat.setDate(targetSun.getDate() + 6);
+        weekStart = targetSun.toISOString().split('T')[0];
+        weekEnd = targetSat.toISOString().split('T')[0];
+        document.getElementById('fin-week-start').value = weekStart;
+        document.getElementById('fin-week-end').value = weekEnd;
+      }
+      return { weekStart: weekStart, weekEnd: weekEnd };
+    }
+
+    async function loadFinancials() {
+      var dates = getFinancialsDates();
+      var results = document.getElementById('fin-results');
+      results.innerHTML = '<p>Loading financial data...</p>';
+
+      try {
+        var res = await fetch(API_BASE + '/stack-ranking?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd);
+        var data = await res.json();
+        if (data.error) { results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>'; return; }
+
+        var rows = data.rows || [];
+        var totals = data.totals || {};
+        var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+        var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
+
+        var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
+        html += '<table><thead><tr><th>Name</th><th>Division</th><th>Head Count</th><th>Total Bill</th><th>Total Pay</th><th>GM$</th><th>GP%</th></tr></thead><tbody>';
+        rows.forEach(function(r) {
+          var totalPay = r.revenue - r.gross_margin_dollars;
+          html += '<tr><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
+            '<td style="text-align:right">' + r.head_count + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(totalPay) + '</td>' +
+            '<td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
+        });
+        var totalPay = (totals.total_revenue || 0) - (totals.total_gm_dollars || 0);
+        html += '<tr style="font-weight:bold;background:#f0f0f0;"><td>TOTALS</td><td></td>' +
+          '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totalPay) + '</td>' +
+          '<td style="text-align:right">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
+          '<td style="text-align:right">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
+        html += '</tbody></table>';
+        results.innerHTML = html;
+      } catch (err) {
+        results.innerHTML = '<p class="alert alert-error">Error: ' + err.message + '</p>';
+      }
+    }
+
+    // =========== USER ADMIN ===========
+
+    async function loadUsers() {
+      try {
+        var res = await fetch(API_BASE + '/user-configs?includeInactive=true');
+        users = await res.json();
+        renderUsers();
+      } catch (err) {
+        document.getElementById('users-table').innerHTML =
+          '<tr><td colspan="10" class="alert alert-error">Error loading users: ' + err.message + '</td></tr>';
+      }
+    }
+
+    function renderUsers() {
+      var tbody = document.getElementById('users-table');
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
+        return;
+      }
+
+      var html = '';
+      users.forEach(function(u) {
+        var roleBadge = u.role === 'recruiter'
+          ? '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Recruiter</span>'
+          : u.role === 'account_manager'
+          ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Acct Mgr</span>'
+          : '<span style="background:#f3f4f6;color:#6b7280;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Unknown</span>';
+        var statusBadge = u.is_active
+          ? '<span class="badge badge-active">Active</span>'
+          : '<span class="badge badge-inactive">Inactive</span>';
+        var divName = divisions.find(function(d) { return d.division_id === u.division_id; });
+        var checkmark = '<span style="color:#059669;">Y</span>';
+        var dash = '<span style="color:#9ca3af;">-</span>';
+
+        html += '<tr>' +
+          '<td><strong>' + u.user_name + '</strong></td>' +
+          '<td>' + u.user_id + '</td>' +
+          '<td style="color:#6b7280;font-size:0.85rem;">' + (u.title || '-') + '</td>' +
+          '<td>' + roleBadge + '</td>' +
+          '<td>' + (divName ? divName.division_name : 'Div ' + u.division_id) + '</td>' +
+          '<td>' + (u.weekly_goal || 0) + '</td>' +
+          '<td style="text-align:center">' + (u.on_hours_report ? checkmark : dash) + '</td>' +
+          '<td style="text-align:center">' + (u.on_stack_ranking ? checkmark : dash) + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td class="actions"><button class="btn btn-secondary" onclick="editUser(' + u.config_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button></td>' +
+          '</tr>';
+      });
+      tbody.innerHTML = html;
+
+      // Stats
+      var active = users.filter(function(u) { return u.is_active; }).length;
+      var onHours = users.filter(function(u) { return u.on_hours_report && u.is_active; }).length;
+      var onSR = users.filter(function(u) { return u.on_stack_ranking && u.is_active; }).length;
+      var totalGoal = users.filter(function(u) { return u.is_active && u.on_hours_report; }).reduce(function(sum, u) { return sum + (u.weekly_goal || 0); }, 0);
+      document.getElementById('user-stats').innerHTML =
+        '<div class="stat"><div class="stat-value">' + active + '</div><div class="stat-label">Active Users</div></div>' +
+        '<div class="stat"><div class="stat-value">' + onHours + '</div><div class="stat-label">On Hours Report</div></div>' +
+        '<div class="stat"><div class="stat-value">' + onSR + '</div><div class="stat-label">On Stack Ranking</div></div>' +
+        '<div class="stat"><div class="stat-value">' + totalGoal.toLocaleString() + '</div><div class="stat-label">Total Weekly Goal</div></div>';
+    }
+
+    function openAddUserModal() {
+      document.getElementById('modal-title').textContent = 'Add User';
+      document.getElementById('user-form').reset();
+      document.getElementById('edit-config-id').value = '';
+      document.getElementById('edit-active').checked = true;
+      document.getElementById('edit-hours-report').checked = false;
+      document.getElementById('edit-stack-ranking').checked = false;
+      document.getElementById('user-modal').classList.add('active');
+    }
+
+    function editUser(configId) {
+      var u = users.find(function(usr) { return usr.config_id === configId; });
+      if (!u) return;
+      document.getElementById('modal-title').textContent = 'Edit User';
+      document.getElementById('edit-config-id').value = u.config_id;
+      document.getElementById('edit-name').value = u.user_name;
+      document.getElementById('edit-user-id').value = u.user_id;
+      document.getElementById('edit-title').value = u.title || '';
+      document.getElementById('edit-role').value = u.role || 'unknown';
+      document.getElementById('edit-division').value = u.division_id;
+      document.getElementById('edit-goal').value = u.weekly_goal || 0;
+      document.getElementById('edit-order').value = u.display_order || 99;
+      document.getElementById('edit-hours-report').checked = !!u.on_hours_report;
+      document.getElementById('edit-stack-ranking').checked = !!u.on_stack_ranking;
+      document.getElementById('edit-active').checked = !!u.is_active;
+      document.getElementById('user-modal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('user-modal').classList.remove('active');
+    }
+
+    document.getElementById('user-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var configId = document.getElementById('edit-config-id').value;
+      var data = {
+        user_name: document.getElementById('edit-name').value,
+        user_id: parseInt(document.getElementById('edit-user-id').value),
+        division_id: parseInt(document.getElementById('edit-division').value),
+        role: document.getElementById('edit-role').value,
+        title: document.getElementById('edit-title').value || null,
+        weekly_goal: parseInt(document.getElementById('edit-goal').value) || 0,
+        display_order: parseInt(document.getElementById('edit-order').value) || 99,
+        on_hours_report: document.getElementById('edit-hours-report').checked,
+        on_stack_ranking: document.getElementById('edit-stack-ranking').checked,
+        is_active: document.getElementById('edit-active').checked
+      };
+
+      try {
+        var res;
+        if (configId) {
+          res = await fetch(API_BASE + '/user-configs/' + configId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        } else {
+          res = await fetch(API_BASE + '/user-configs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        }
+        if (res.ok) {
+          closeModal();
+          showAlert(configId ? 'User updated' : 'User added');
+          await loadUsers();
+        } else {
+          var err = await res.json();
+          showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
+        }
+      } catch (err) {
+        showAlert('Error: ' + err.message, 'error');
+      }
+    });
 
     // Initialize
     async function init() {
       await loadDivisions();
-      await loadRecruiters();
       loadLastCalculation();
       document.getElementById('lastUpdated').textContent = 'Loaded: ' + new Date().toLocaleString();
     }
@@ -1407,6 +1450,60 @@ app.http('debugClearConnect', {
     } catch (error) {
       context.error('Debug error:', error);
       return { status: 500, jsonBody: { error: String(error) } };
+    }
+  }
+});
+
+// USER CONFIG (Stack Ranking users)
+
+app.http('getUserConfigs', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'user-configs',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const includeInactive = request.query.get('includeInactive') === 'true';
+      const users = await databaseService.getUserConfigs(includeInactive);
+      return { jsonBody: users };
+    } catch (error) {
+      context.error('Error getting user configs:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get user configs' } };
+    }
+  }
+});
+
+app.http('createUserConfig', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'user-configs',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+      const user = await databaseService.createUserConfig(body);
+      return { status: 201, jsonBody: user };
+    } catch (error) {
+      context.error('Error creating user config:', error);
+      return { status: 500, jsonBody: { error: 'Failed to create user config' } };
+    }
+  }
+});
+
+app.http('updateUserConfig', {
+  methods: ['PUT'],
+  authLevel: 'anonymous',
+  route: 'user-configs/{id}',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const id = parseInt(request.params.id || '0');
+      const body = await request.json() as any;
+      const user = await databaseService.updateUserConfig({ ...body, config_id: id });
+      if (!user) {
+        return { status: 404, jsonBody: { error: 'User config not found' } };
+      }
+      return { jsonBody: user };
+    } catch (error) {
+      context.error('Error updating user config:', error);
+      return { status: 500, jsonBody: { error: 'Failed to update user config' } };
     }
   }
 });

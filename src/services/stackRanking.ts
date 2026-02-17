@@ -35,21 +35,21 @@ class StackRankingService {
 
   /**
    * Auto-discover and add new users found in ATS data.
-   * Fetches their title, infers role, and adds to recruiter_config.
+   * Fetches their title, infers role, and adds to user_config.
    */
   async autoDiscoverUsers(
     allData: PlacementData[],
-    activeUserIds: Set<number>,
+    knownUserIds: Set<number>,
     mappings: { division_id: number; ats_system: string }[]
   ): Promise<void> {
     const atsMap = new Map(mappings.map(m => [m.division_id, m.ats_system]));
 
     for (const d of allData) {
-      if (activeUserIds.has(d.recruiter_user_id)) continue;
+      if (knownUserIds.has(d.recruiter_user_id)) continue;
 
-      const exists = await databaseService.recruiterExists(d.recruiter_user_id);
+      const exists = await databaseService.userConfigExists(d.recruiter_user_id);
       if (exists) {
-        activeUserIds.add(d.recruiter_user_id);
+        knownUserIds.add(d.recruiter_user_id);
         continue;
       }
 
@@ -72,21 +72,19 @@ class StackRankingService {
 
         const role = this.inferRole(title);
 
-        await databaseService.createRecruiter({
+        await databaseService.createUserConfig({
           user_id: d.recruiter_user_id,
           user_name: d.recruiter_name || `User ${d.recruiter_user_id}`,
           division_id: divisionId,
-          weekly_goal: 0,
-          display_order: 99,
           role,
           title: title || undefined,
           ats_source: atsSource,
-          on_hours_report: false,
           on_stack_ranking: true,
+          on_hours_report: false,
         });
 
-        activeUserIds.add(d.recruiter_user_id);
-        console.log(`Auto-added ${atsSource} user: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
+        knownUserIds.add(d.recruiter_user_id);
+        console.log(`Auto-added ${atsSource} user to user_config: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
       } catch (err) {
         console.error(`Error auto-adding user ${d.recruiter_user_id}:`, err);
       }
@@ -121,17 +119,17 @@ class StackRankingService {
         : Promise.resolve([] as PlacementData[]),
     ]);
 
-    // 3. Get active recruiters and auto-discover new ones
-    const activeRecruiters = await databaseService.getRecruiters(false);
-    const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
+    // 3. Get known user_config users and auto-discover new ones
+    const userConfigs = await databaseService.getUserConfigs(false);
+    const knownUserIds = new Set(userConfigs.map(u => u.user_id));
 
     const allRawData = [...symplrData, ...bullhornData];
-    await this.autoDiscoverUsers(allRawData, activeUserIds, mappings);
+    await this.autoDiscoverUsers(allRawData, knownUserIds, mappings);
 
-    // 3b. Re-fetch recruiters to get updated flags after auto-discovery
-    const allRecruiters = await databaseService.getRecruiters(false);
-    const stackRankingUserIds = new Set(
-      allRecruiters.filter(r => r.on_stack_ranking).map(r => r.user_id)
+    // 3b. Re-fetch user configs after auto-discovery, filter to on_stack_ranking
+    const activeUsers = await databaseService.getUserConfigs(false);
+    const activeUserIds = new Set(
+      activeUsers.filter(u => u.on_stack_ranking).map(u => u.user_id)
     );
 
     // 4. Filter by mapped divisions
@@ -169,11 +167,11 @@ class StackRankingService {
       }
     }
 
-    // 7. Compute GM$, GP%, Revenue and build unranked rows (only for on_stack_ranking users)
+    // 7. Compute GM$, GP%, Revenue (only for active user_config users)
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
 
     for (const [userId, data] of recruiterMap) {
-      if (!stackRankingUserIds.has(userId)) continue;
+      if (!activeUserIds.has(userId)) continue;
 
       const revenue = data.total_bill_amount;
       const gmDollars = data.total_bill_amount - data.total_pay_amount;

@@ -13,7 +13,10 @@ import {
   PlacementData,
   StackRankingRow,
   StackRankingSnapshot,
-  AtsSystem
+  AtsSystem,
+  UserConfig,
+  CreateUserConfigRequest,
+  UpdateUserConfigRequest,
 } from '../types';
 
 class DatabaseService {
@@ -158,15 +161,13 @@ class DatabaseService {
     return result.recordset[0] || null;
   }
 
-  // RECRUITERS
+  // RECRUITERS — now redirect to user_config table
 
   async getRecruiters(includeInactive = false): Promise<RecruiterConfig[]> {
     const pool = await this.getPool();
-    // Never include deleted recruiters, but optionally include inactive ones
     const query = includeInactive
-      ? 'SELECT * FROM dbo.recruiter_config WHERE is_deleted = 0 ORDER BY division_id, display_order'
-      : 'SELECT * FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0 ORDER BY division_id, display_order';
-    
+      ? 'SELECT * FROM dbo.user_config WHERE on_hours_report = 1 ORDER BY division_id, display_order'
+      : 'SELECT * FROM dbo.user_config WHERE is_active = 1 AND on_hours_report = 1 ORDER BY division_id, display_order';
     const result = await pool.request().query(query);
     return result.recordset;
   }
@@ -175,8 +176,7 @@ class DatabaseService {
     const pool = await this.getPool();
     const result = await pool.request()
       .input('configId', sql.Int, configId)
-      .query('SELECT * FROM dbo.recruiter_config WHERE config_id = @configId');
-    
+      .query('SELECT * FROM dbo.user_config WHERE config_id = @configId');
     return result.recordset[0] || null;
   }
 
@@ -185,37 +185,88 @@ class DatabaseService {
     const result = await pool.request()
       .input('divisionId', sql.Int, divisionId)
       .query(`
-        SELECT * FROM dbo.recruiter_config 
-        WHERE division_id = @divisionId AND is_active = 1
+        SELECT * FROM dbo.user_config
+        WHERE division_id = @divisionId AND is_active = 1 AND on_hours_report = 1
         ORDER BY display_order
       `);
-    
     return result.recordset;
   }
 
   async createRecruiter(data: CreateRecruiterRequest): Promise<RecruiterConfig> {
+    // Redirect to user_config with on_hours_report = true
+    const userConfig = await this.createUserConfig({
+      user_id: data.user_id,
+      user_name: data.user_name,
+      division_id: data.division_id,
+      weekly_goal: data.weekly_goal,
+      on_hours_report: true,
+      on_stack_ranking: false,
+      display_order: data.display_order,
+    });
+    return userConfig as any;
+  }
+
+  async updateRecruiter(data: UpdateRecruiterRequest): Promise<RecruiterConfig | null> {
+    const result = await this.updateUserConfig({
+      config_id: data.config_id,
+      user_name: data.user_name,
+      division_id: data.division_id,
+      weekly_goal: data.weekly_goal,
+      display_order: data.display_order,
+      is_active: data.is_active,
+    });
+    return result as any;
+  }
+
+  async deleteRecruiter(configId: number): Promise<boolean> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('configId', sql.Int, configId)
+      .query(`
+        UPDATE dbo.user_config
+        SET is_active = 0, modified_at = GETDATE()
+        WHERE config_id = @configId
+      `);
+    return (result.rowsAffected[0] || 0) > 0;
+  }
+
+  async recruiterExists(userId: number): Promise<boolean> {
+    return this.userConfigExists(userId);
+  }
+
+  // USER CONFIG (unified table for both reports)
+
+  async getUserConfigs(includeInactive = false): Promise<UserConfig[]> {
+    const pool = await this.getPool();
+    const query = includeInactive
+      ? 'SELECT * FROM dbo.user_config ORDER BY division_id, display_order'
+      : 'SELECT * FROM dbo.user_config WHERE is_active = 1 ORDER BY division_id, display_order';
+    const result = await pool.request().query(query);
+    return result.recordset;
+  }
+
+  async createUserConfig(data: CreateUserConfigRequest): Promise<UserConfig> {
     const pool = await this.getPool();
     const result = await pool.request()
       .input('userId', sql.Int, data.user_id)
       .input('userName', sql.NVarChar(200), data.user_name)
       .input('divisionId', sql.Int, data.division_id)
-      .input('weeklyGoal', sql.Decimal(10, 2), data.weekly_goal)
-      .input('displayOrder', sql.Int, data.display_order || 0)
-      .input('role', sql.VarChar(50), data.role || 'recruiter')
+      .input('role', sql.VarChar(50), data.role || 'unknown')
       .input('title', sql.NVarChar(200), data.title || null)
       .input('atsSource', sql.VarChar(20), data.ats_source || null)
-      .input('onHoursReport', sql.Bit, data.on_hours_report !== undefined ? data.on_hours_report : true)
-      .input('onStackRanking', sql.Bit, data.on_stack_ranking !== undefined ? data.on_stack_ranking : false)
+      .input('weeklyGoal', sql.Int, data.weekly_goal || 0)
+      .input('onHoursReport', sql.Bit, data.on_hours_report ?? false)
+      .input('onStackRanking', sql.Bit, data.on_stack_ranking ?? false)
+      .input('displayOrder', sql.Int, data.display_order || 99)
       .query(`
-        INSERT INTO dbo.recruiter_config (user_id, user_name, division_id, weekly_goal, display_order, role, title, ats_source, on_hours_report, on_stack_ranking)
+        INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, ats_source, weekly_goal, on_hours_report, on_stack_ranking, display_order)
         OUTPUT INSERTED.*
-        VALUES (@userId, @userName, @divisionId, @weeklyGoal, @displayOrder, @role, @title, @atsSource, @onHoursReport, @onStackRanking)
+        VALUES (@userId, @userName, @divisionId, @role, @title, @atsSource, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
       `);
-
     return result.recordset[0];
   }
 
-  async updateRecruiter(data: UpdateRecruiterRequest): Promise<RecruiterConfig | null> {
+  async updateUserConfig(data: UpdateUserConfigRequest): Promise<UserConfig | null> {
     const pool = await this.getPool();
     const updates: string[] = [];
     const request = pool.request().input('configId', sql.Int, data.config_id);
@@ -228,18 +279,6 @@ class DatabaseService {
       updates.push('division_id = @divisionId');
       request.input('divisionId', sql.Int, data.division_id);
     }
-    if (data.weekly_goal !== undefined) {
-      updates.push('weekly_goal = @weeklyGoal');
-      request.input('weeklyGoal', sql.Decimal(10, 2), data.weekly_goal);
-    }
-    if (data.display_order !== undefined) {
-      updates.push('display_order = @displayOrder');
-      request.input('displayOrder', sql.Int, data.display_order);
-    }
-    if (data.is_active !== undefined) {
-      updates.push('is_active = @isActive');
-      request.input('isActive', sql.Bit, data.is_active);
-    }
     if (data.role !== undefined) {
       updates.push('role = @role');
       request.input('role', sql.VarChar(50), data.role);
@@ -247,6 +286,10 @@ class DatabaseService {
     if (data.title !== undefined) {
       updates.push('title = @title');
       request.input('title', sql.NVarChar(200), data.title);
+    }
+    if (data.weekly_goal !== undefined) {
+      updates.push('weekly_goal = @weeklyGoal');
+      request.input('weeklyGoal', sql.Int, data.weekly_goal);
     }
     if (data.on_hours_report !== undefined) {
       updates.push('on_hours_report = @onHoursReport');
@@ -256,42 +299,32 @@ class DatabaseService {
       updates.push('on_stack_ranking = @onStackRanking');
       request.input('onStackRanking', sql.Bit, data.on_stack_ranking);
     }
+    if (data.is_active !== undefined) {
+      updates.push('is_active = @isActive');
+      request.input('isActive', sql.Bit, data.is_active);
+    }
+    if (data.display_order !== undefined) {
+      updates.push('display_order = @displayOrder');
+      request.input('displayOrder', sql.Int, data.display_order);
+    }
 
     if (updates.length === 0) return null;
-
     updates.push('modified_at = GETDATE()');
 
     const result = await request.query(`
-      UPDATE dbo.recruiter_config
+      UPDATE dbo.user_config
       SET ${updates.join(', ')}
       OUTPUT INSERTED.*
       WHERE config_id = @configId
     `);
-
     return result.recordset[0] || null;
   }
 
-  async deleteRecruiter(configId: number): Promise<boolean> {
-    const pool = await this.getPool();
-    // Soft delete - set is_deleted = 1 instead of actually removing
-    const result = await pool.request()
-      .input('configId', sql.Int, configId)
-      .query(`
-        UPDATE dbo.recruiter_config 
-        SET is_deleted = 1, is_active = 0, modified_at = GETDATE()
-        WHERE config_id = @configId
-      `);
-    
-    return (result.rowsAffected[0] || 0) > 0;
-  }
-
-  // Check if a recruiter exists (including deleted ones) by user_id
-  async recruiterExists(userId: number): Promise<boolean> {
+  async userConfigExists(userId: number): Promise<boolean> {
     const pool = await this.getPool();
     const result = await pool.request()
       .input('userId', sql.Int, userId)
-      .query('SELECT 1 FROM dbo.recruiter_config WHERE user_id = @userId');
-    
+      .query('SELECT 1 FROM dbo.user_config WHERE user_id = @userId');
     return result.recordset.length > 0;
   }
 
@@ -441,11 +474,11 @@ class DatabaseService {
           ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
           ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
           ISNULL(MAX(sd.total_hours), 0) AS weekly_total
-        FROM dbo.recruiter_config rc
+        FROM dbo.user_config rc
         INNER JOIN dbo.divisions d ON rc.division_id = d.division_id
         CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
         LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
-        WHERE rc.is_active = 1 AND rc.is_deleted = 0 AND d.is_active = 1
+        WHERE rc.is_active = 1 AND rc.on_hours_report = 1 AND d.is_active = 1
         GROUP BY 
           rc.user_id, rc.user_name, rc.weekly_goal, rc.display_order,
           d.division_id, d.division_name, d.display_order, 
@@ -544,10 +577,10 @@ class DatabaseService {
             ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
             ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
             ISNULL(MAX(sd.total_hours), 0) AS weekly_total
-          FROM dbo.recruiter_config rc
+          FROM dbo.user_config rc
           CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
           LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period
-          WHERE rc.is_active = 1 AND rc.is_deleted = 0
+          WHERE rc.is_active = 1 AND rc.on_hours_report = 1
           GROUP BY rc.user_id, rc.weekly_goal, wp.week_period
         )
         SELECT 
@@ -719,7 +752,7 @@ class DatabaseService {
     
     // Get active recruiter user IDs
     const recruitersResult = await hoursReportPool.request().query(`
-      SELECT user_id FROM dbo.recruiter_config WHERE is_active = 1 AND is_deleted = 0
+      SELECT user_id FROM dbo.user_config WHERE is_active = 1 AND on_hours_report = 1
     `);
     const activeUserIds = new Set(recruitersResult.recordset.map((r: any) => r.user_id));
     
