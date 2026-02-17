@@ -204,10 +204,12 @@ class DatabaseService {
       .input('role', sql.VarChar(50), data.role || 'recruiter')
       .input('title', sql.NVarChar(200), data.title || null)
       .input('atsSource', sql.VarChar(20), data.ats_source || null)
+      .input('onHoursReport', sql.Bit, data.on_hours_report !== undefined ? data.on_hours_report : true)
+      .input('onStackRanking', sql.Bit, data.on_stack_ranking !== undefined ? data.on_stack_ranking : false)
       .query(`
-        INSERT INTO dbo.recruiter_config (user_id, user_name, division_id, weekly_goal, display_order, role, title, ats_source)
+        INSERT INTO dbo.recruiter_config (user_id, user_name, division_id, weekly_goal, display_order, role, title, ats_source, on_hours_report, on_stack_ranking)
         OUTPUT INSERTED.*
-        VALUES (@userId, @userName, @divisionId, @weeklyGoal, @displayOrder, @role, @title, @atsSource)
+        VALUES (@userId, @userName, @divisionId, @weeklyGoal, @displayOrder, @role, @title, @atsSource, @onHoursReport, @onStackRanking)
       `);
 
     return result.recordset[0];
@@ -245,6 +247,14 @@ class DatabaseService {
     if (data.title !== undefined) {
       updates.push('title = @title');
       request.input('title', sql.NVarChar(200), data.title);
+    }
+    if (data.on_hours_report !== undefined) {
+      updates.push('on_hours_report = @onHoursReport');
+      request.input('onHoursReport', sql.Bit, data.on_hours_report);
+    }
+    if (data.on_stack_ranking !== undefined) {
+      updates.push('on_stack_ranking = @onStackRanking');
+      request.input('onStackRanking', sql.Bit, data.on_stack_ranking);
     }
 
     if (updates.length === 0) return null;
@@ -674,6 +684,30 @@ class DatabaseService {
       .input('userId', sql.Int, userId)
       .query(`SELECT occupation FROM dbo.CorporateUser WHERE userID = @userId`);
     return result.recordset[0]?.occupation || null;
+  }
+
+  // Get user department name from Bullhorn
+  async getUserDepartmentFromBullhorn(userId: number): Promise<string | null> {
+    if (!this.bullhornConnectionString) return null;
+    const pool = await this.getBullhornPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT TOP 1 cd.name AS department_name
+        FROM dbo.CorporateUserDepartments cud
+        INNER JOIN dbo.CorporationDepartment cd ON cud.departmentID = cd.corporationDepartmentID
+        WHERE cud.userID = @userId AND cud.isDeleted = 0 AND cd.isDeleted = 0
+      `);
+    return result.recordset[0]?.department_name || null;
+  }
+
+  // Find a division by name (case-insensitive)
+  async findDivisionByName(name: string): Promise<number | null> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('name', sql.NVarChar(200), name)
+      .query(`SELECT division_id FROM dbo.divisions WHERE LOWER(division_name) = LOWER(@name) AND is_active = 1`);
+    return result.recordset[0]?.division_id || null;
   }
 
   // Get live hours by day for a week (for forecasting next week)

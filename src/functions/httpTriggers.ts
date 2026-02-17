@@ -285,8 +285,9 @@ app.http('calculateWeekly', {
       // Get active, non-deleted recruiters only
       const activeRecruiters = await databaseService.getRecruiters(false);
       const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
+      const hoursReportUserIds = new Set(activeRecruiters.filter(r => r.on_hours_report).map(r => r.user_id));
       const recruiterNames = new Map(activeRecruiters.map(r => [r.user_id, r.user_name]));
-      context.log(`Found ${activeUserIds.size} active recruiters`);
+      context.log(`Found ${activeUserIds.size} active recruiters, ${hoursReportUserIds.size} on hours report`);
       
       const results: any = {
         lastWeek: { weekStart: formatDate(lastWeekSunday), weekEnd: formatDate(lastWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
@@ -334,11 +335,14 @@ app.http('calculateWeekly', {
                   user_name: name,
                   division_id: 1,
                   weekly_goal: 0,
-                  display_order: 99
+                  display_order: 99,
+                  on_hours_report: true,
+                  on_stack_ranking: false,
                 });
-                
+
                 // Add to active set so their hours get counted
                 activeUserIds.add(userId);
+                hoursReportUserIds.add(userId);
                 recruiterNames.set(userId, name);
                 newRecruiters.push({ userId, name });
                 context.log(`Auto-added recruiter: ${name} (ID: ${userId})`);
@@ -349,12 +353,12 @@ app.http('calculateWeekly', {
           }
         }
         
-        // Round and save snapshots - ONLY for active recruiters
+        // Round and save snapshots - ONLY for on_hours_report recruiters
         let totalHoursForWeek = 0;
         const recruiterDetails: any[] = [];
-        
+
         for (const [userId, hours] of hoursByRecruiter) {
-          if (activeUserIds.has(userId)) {
+          if (hoursReportUserIds.has(userId)) {
             const roundedHours = Math.round(hours * 100) / 100;
             const lunchMinutes = Math.round(lunchMinutesMap.get(userId) || 0);
             totalHoursForWeek += roundedHours;
@@ -638,6 +642,8 @@ app.http('adminPortal', {
             <th>Weekly Goal</th>
             <th>Display Order</th>
             <th>ATS</th>
+            <th>Hours Rpt</th>
+            <th>Stack Rank</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -765,6 +771,18 @@ app.http('adminPortal', {
             <input type="number" id="edit-order" value="99" min="0">
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="edit-on-hours-report" checked> On Hours Report
+            </label>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="edit-on-stack-ranking"> On Stack Ranking
+            </label>
+          </div>
+        </div>
         <div class="form-group">
           <label>
             <input type="checkbox" id="edit-active" checked> Active
@@ -838,6 +856,8 @@ app.http('adminPortal', {
           '<td>' + r.weekly_goal + '</td>' +
           '<td>' + r.display_order + '</td>' +
           '<td>' + (r.ats_source || '<span style="color:#9ca3af">—</span>') + '</td>' +
+          '<td style="text-align:center">' + (r.on_hours_report ? '<span style="color:#10b981;font-weight:bold">Yes</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
+          '<td style="text-align:center">' + (r.on_stack_ranking ? '<span style="color:#10b981;font-weight:bold">Yes</span>' : '<span style="color:#9ca3af">No</span>') + '</td>' +
           '<td><span class="badge ' + (r.is_active ? 'badge-active' : 'badge-inactive') + '">' +
             (r.is_active ? 'Active' : 'Inactive') + '</span></td>' +
           '<td class="actions">' +
@@ -863,6 +883,8 @@ app.http('adminPortal', {
       document.getElementById('edit-config-id').value = '';
       document.getElementById('edit-role').value = 'recruiter';
       document.getElementById('edit-title').value = '';
+      document.getElementById('edit-on-hours-report').checked = true;
+      document.getElementById('edit-on-stack-ranking').checked = false;
       document.getElementById('edit-active').checked = true;
       document.getElementById('recruiter-modal').classList.add('active');
     }
@@ -878,6 +900,8 @@ app.http('adminPortal', {
       document.getElementById('edit-division').value = r.division_id;
       document.getElementById('edit-role').value = r.role || 'unknown';
       document.getElementById('edit-title').value = r.title || '';
+      document.getElementById('edit-on-hours-report').checked = r.on_hours_report !== false;
+      document.getElementById('edit-on-stack-ranking').checked = r.on_stack_ranking === true;
       document.getElementById('edit-goal').value = r.weekly_goal;
       document.getElementById('edit-order').value = r.display_order;
       document.getElementById('edit-active').checked = r.is_active;
@@ -899,6 +923,8 @@ app.http('adminPortal', {
         division_id: parseInt(document.getElementById('edit-division').value),
         role: document.getElementById('edit-role').value,
         title: document.getElementById('edit-title').value || undefined,
+        on_hours_report: document.getElementById('edit-on-hours-report').checked,
+        on_stack_ranking: document.getElementById('edit-on-stack-ranking').checked,
         weekly_goal: parseInt(document.getElementById('edit-goal').value) || 0,
         display_order: parseInt(document.getElementById('edit-order').value) || 99,
         is_active: document.getElementById('edit-active').checked

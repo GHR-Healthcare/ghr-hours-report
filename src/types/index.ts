@@ -22,6 +22,8 @@ export interface RecruiterConfig {
   role: RecruiterRole;
   title: string | null;
   ats_source: string | null;
+  on_hours_report: boolean;
+  on_stack_ranking: boolean;
   created_at: Date;
   modified_at: Date;
 }
@@ -130,6 +132,8 @@ export interface CreateRecruiterRequest {
   role?: RecruiterRole;
   title?: string;
   ats_source?: string;
+  on_hours_report?: boolean;
+  on_stack_ranking?: boolean;
 }
 
 export interface UpdateRecruiterRequest {
@@ -141,6 +145,8 @@ export interface UpdateRecruiterRequest {
   is_active?: boolean;
   role?: RecruiterRole;
   title?: string;
+  on_hours_report?: boolean;
+  on_stack_ranking?: boolean;
 }
 
 // Stack Ranking Types

@@ -56,9 +56,16 @@ class StackRankingService {
       try {
         const atsSource = atsMap.get(d.division_id) || 'symplr';
         let title: string | null = null;
+        let divisionId = d.division_id || 1;
 
         if (atsSource === 'bullhorn') {
           title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
+          // Try to match Bullhorn department to an existing division
+          const deptName = await databaseService.getUserDepartmentFromBullhorn(d.recruiter_user_id);
+          if (deptName) {
+            const matchedDivId = await databaseService.findDivisionByName(deptName);
+            if (matchedDivId) divisionId = matchedDivId;
+          }
         } else {
           title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
         }
@@ -68,16 +75,18 @@ class StackRankingService {
         await databaseService.createRecruiter({
           user_id: d.recruiter_user_id,
           user_name: d.recruiter_name || `User ${d.recruiter_user_id}`,
-          division_id: d.division_id || 1,
+          division_id: divisionId,
           weekly_goal: 0,
           display_order: 99,
           role,
           title: title || undefined,
           ats_source: atsSource,
+          on_hours_report: false,
+          on_stack_ranking: true,
         });
 
         activeUserIds.add(d.recruiter_user_id);
-        console.log(`Auto-added ${atsSource} user: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role})`);
+        console.log(`Auto-added ${atsSource} user: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
       } catch (err) {
         console.error(`Error auto-adding user ${d.recruiter_user_id}:`, err);
       }
@@ -119,6 +128,12 @@ class StackRankingService {
     const allRawData = [...symplrData, ...bullhornData];
     await this.autoDiscoverUsers(allRawData, activeUserIds, mappings);
 
+    // 3b. Re-fetch recruiters to get updated flags after auto-discovery
+    const allRecruiters = await databaseService.getRecruiters(false);
+    const stackRankingUserIds = new Set(
+      allRecruiters.filter(r => r.on_stack_ranking).map(r => r.user_id)
+    );
+
     // 4. Filter by mapped divisions
     const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
     const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
@@ -154,10 +169,12 @@ class StackRankingService {
       }
     }
 
-    // 7. Compute GM$, GP%, Revenue and build unranked rows
+    // 7. Compute GM$, GP%, Revenue and build unranked rows (only for on_stack_ranking users)
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
 
     for (const [userId, data] of recruiterMap) {
+      if (!stackRankingUserIds.has(userId)) continue;
+
       const revenue = data.total_bill_amount;
       const gmDollars = data.total_bill_amount - data.total_pay_amount;
       const gpPct = revenue > 0 ? (gmDollars / revenue) * 100 : 0;

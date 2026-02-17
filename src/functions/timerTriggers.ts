@@ -61,7 +61,8 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   // Get active, non-deleted recruiters only
   const activeRecruiters = await databaseService.getRecruiters(false);
   const activeUserIds = new Set(activeRecruiters.map(r => r.user_id));
-  context.log(`Found ${activeUserIds.size} active recruiters`);
+  const hoursReportUserIds = new Set(activeRecruiters.filter(r => r.on_hours_report).map(r => r.user_id));
+  context.log(`Found ${activeUserIds.size} active recruiters, ${hoursReportUserIds.size} on hours report`);
   
   const thisWeekStart = formatDate(weekInfo.thisWeek.sunday);
   const nextWeekStart = formatDate(weekInfo.nextWeek.sunday);
@@ -113,10 +114,13 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
                 user_name: userName || `User ${userId}`,
                 division_id: 1,
                 weekly_goal: 0,
-                display_order: 99
+                display_order: 99,
+                on_hours_report: true,
+                on_stack_ranking: false,
               });
-              
+
               activeUserIds.add(userId);
+              hoursReportUserIds.add(userId);
               context.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
             } catch (addError) {
               context.log(`Error adding recruiter ${userId}: ${addError}`);
@@ -126,9 +130,9 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
       }
     }
     
-    // Collect snapshots for batch save
+    // Collect snapshots for batch save - only for on_hours_report users
     for (const [userId, hours] of hoursByRecruiter) {
-      if (activeUserIds.has(userId)) {
+      if (hoursReportUserIds.has(userId)) {
         snapshotsToSave.push({
           userId,
           weekStart,
