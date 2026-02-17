@@ -912,6 +912,7 @@ app.http('adminPortal', {
         }
         if (tab.dataset.tab === 'financials') {
           getFinancialsDates();
+          loadFinancials();
         }
         if (tab.dataset.tab === 'user-admin') {
           loadUsers();
@@ -1034,20 +1035,33 @@ app.http('adminPortal', {
     function renderCalculationResults(data) {
       var html = '<h4>Results</h4>';
       html += '<p>Calculated at: ' + new Date(data.calculatedAt).toLocaleString() + '</p>';
-      html += '<p>Snapshot day: ' + data.snapshotDayName + '</p>';
+      html += '<p>Snapshot day of week: ' + data.snapshotDayName + '</p>';
       if (data.regionsWithFilledOrders && data.regionsWithFilledOrders.length > 0) {
-        html += '<p><strong>Regions:</strong> ' + data.regionsWithFilledOrders.join(', ') + '</p>';
+        html += '<p><strong>Regions with filled orders:</strong> ' + data.regionsWithFilledOrders.join(', ') + '</p>';
       }
       if (data.newRecruitersAdded && data.newRecruitersAdded.length > 0) {
         html += '<p style="color:#4CAF50;"><strong>New users added:</strong> ' + data.newRecruitersAdded.map(function(r) { return r.name; }).join(', ') + '</p>';
       }
-      html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Users</th><th>Total Hours</th></tr></thead><tbody>';
+      html += '<h4 style="margin-top: 20px;">Weekly Summary</h4>';
+      html += '<table><thead><tr><th>Week</th><th>Date Range</th><th>Orders</th><th>Recruiters</th><th>Total Hours</th></tr></thead><tbody>';
       for (var weekName in data.results) {
         var week = data.results[weekName];
         html += '<tr><td>' + weekName + '</td><td>' + week.weekStart + ' to ' + week.weekEnd + '</td><td>' +
           week.totalOrders + '</td><td>' + week.recruiters.length + '</td><td><strong>' + week.totalHours.toLocaleString() + '</strong></td></tr>';
       }
       html += '</tbody></table>';
+      for (var weekName2 in data.results) {
+        var week2 = data.results[weekName2];
+        if (week2.recruiters && week2.recruiters.length > 0) {
+          html += '<h4 style="margin-top: 20px;">' + weekName2 + ' - Hours by Recruiter</h4>';
+          html += '<table><thead><tr><th>Recruiter</th><th>User ID</th><th>Hours</th><th>Lunch Minutes Deducted</th></tr></thead><tbody>';
+          week2.recruiters.forEach(function(r) {
+            html += '<tr><td>' + r.name + '</td><td>' + r.userId + '</td><td>' + r.hours.toLocaleString() +
+              '</td><td>' + (r.lunchMinutes || 0).toLocaleString() + ' min</td></tr>';
+          });
+          html += '</tbody></table>';
+        }
+      }
       return html;
     }
 
@@ -1262,18 +1276,51 @@ app.http('adminPortal', {
         var numStyle = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;';
         var hdrRight = 'text-align:right;';
 
-        var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
-        html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:20%"><col style="width:15%"><col style="width:7%"><col style="width:16%"><col style="width:16%"><col style="width:16%"><col style="width:10%"></colgroup>';
-        html += '<thead><tr><th>Name</th><th>Division</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GP$</th><th style="' + hdrRight + '">GM%</th></tr></thead><tbody>';
+        // Group rows by division
+        var divisions = {};
+        var divisionOrder = [];
         rows.forEach(function(r) {
-          html += '<tr><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
-            '<td style="' + numStyle + '">' + r.head_count + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
+          if (!divisions[r.division_name]) {
+            divisions[r.division_name] = [];
+            divisionOrder.push(r.division_name);
+          }
+          divisions[r.division_name].push(r);
         });
-        html += '<tr style="font-weight:bold;background:#f0f0f0;"><td>TOTALS</td><td></td>' +
+
+        var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
+        html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:28%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:10%"></colgroup>';
+        html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GP$</th><th style="' + hdrRight + '">GM%</th></tr></thead><tbody>';
+
+        divisionOrder.forEach(function(divName) {
+          var divRows = divisions[divName];
+          // Division header
+          html += '<tr style="background:#e5e7eb;"><td colspan="6" style="font-weight:bold;padding:0.5rem 0.75rem;">' + divName + '</td></tr>';
+          // Division rows
+          var divHC = 0, divBill = 0, divPay = 0;
+          divRows.forEach(function(r) {
+            divHC += r.head_count;
+            divBill += r.total_bill;
+            divPay += r.total_pay;
+            html += '<tr><td style="padding-left:1.5rem;">' + r.recruiter_name + '</td>' +
+              '<td style="' + numStyle + '">' + r.head_count + '</td>' +
+              '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
+              '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
+              '<td style="' + numStyle + '">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
+              '<td style="' + numStyle + '">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
+          });
+          // Division subtotals
+          var divGP = divBill - divPay;
+          var divGM = divBill > 0 ? (divGP / divBill) * 100 : 0;
+          html += '<tr style="font-weight:600;background:#f3f4f6;"><td style="padding-left:1.5rem;">' + divName + ' Subtotal</td>' +
+            '<td style="' + numStyle + '">' + divHC + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(divBill) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(divPay) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtMoney(divGP) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtPct(divGM) + '</td></tr>';
+        });
+
+        // Grand totals
+        html += '<tr style="font-weight:bold;background:#dbeafe;border-top:2px solid #93c5fd;"><td>GRAND TOTAL</td>' +
           '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
