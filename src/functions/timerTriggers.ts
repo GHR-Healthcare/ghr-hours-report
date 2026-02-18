@@ -326,22 +326,47 @@ app.timer('weeklyStackRanking', {
 });
 
 // =============================================================================
-// NIGHTLY CLEANUP - 2:00 AM EST (07:00 UTC)
-// Removes old snapshot data to keep database clean
+// NIGHTLY CLEANUP & USER SYNC - 2:00 AM EST (07:00 UTC)
+// Removes old snapshot data and syncs users from both ATS systems
 // =============================================================================
 app.timer('nightlyCleanup', {
   schedule: '0 0 2 * * *', // 2:00 AM EST
   handler: async (timer: Timer, context: InvocationContext): Promise<void> => {
-    context.log('=== NIGHTLY CLEANUP TRIGGERED (2:00 AM EST) ===');
-    
+    context.log('=== NIGHTLY CLEANUP & USER SYNC TRIGGERED (2:00 AM EST) ===');
+
     try {
+      // 1. Cleanup old snapshots
       const deleted = await databaseService.cleanupOldSnapshots();
       context.log(`Cleanup complete: ${deleted} old snapshots removed`);
 
       const stackDeleted = await databaseService.cleanupOldStackRankingSnapshots();
       context.log(`Stack ranking cleanup: ${stackDeleted} old snapshots removed`);
+
+      // 2. Sync divisions from Bullhorn CorporationDepartment + Symplr static divisions
+      const newDivisions = await databaseService.syncDivisionsFromAts();
+      if (newDivisions > 0) context.log(`Created ${newDivisions} new divisions from ATS`);
+
+      // 3. Sync users from both ATS systems (90-day lookback)
+      // This ensures user_config entries exist with proper divisions
+      // before anyone runs Financials or Stack Ranking during the day
+      context.log('Starting nightly user sync...');
+      const now = new Date();
+      const syncEnd = formatDate(now);
+      const syncStart = new Date(now);
+      syncStart.setDate(syncStart.getDate() - 90);
+      const syncStartStr = formatDate(syncStart);
+
+      const checkedAtsIds = new Set<string>();
+
+      const symplrData = await databaseService.getSymplrPlacementData(syncStartStr, syncEnd);
+      await stackRankingService.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
+
+      const bullhornData = await databaseService.getBullhornPlacementData(syncStartStr, syncEnd);
+      await stackRankingService.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+
+      context.log(`User sync complete: checked ${symplrData.length} Symplr + ${bullhornData.length} Bullhorn placement records`);
     } catch (error) {
-      context.error('Error in nightly cleanup:', error);
+      context.error('Error in nightly cleanup/sync:', error);
       throw error;
     }
   }

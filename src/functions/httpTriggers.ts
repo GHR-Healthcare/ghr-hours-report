@@ -822,6 +822,18 @@ app.http('adminPortal', {
         </div>
         <button class="btn btn-primary" onclick="saveSetting()">Save Setting</button>
       </div>
+
+      <div class="card" style="margin-top: 1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <h3 style="margin:0;">Divisions</h3>
+          <button class="btn btn-secondary" onclick="syncDivisions()" style="font-size:0.8rem;">Sync from ATS</button>
+        </div>
+        <p style="color:#6b7280;font-size:0.875rem;margin-bottom:0.75rem;">Divisions are synced from Bullhorn departments + Symplr (Education, Non-Acute Nursing). ATS mapping controls which system each division queries for placement data.</p>
+        <table>
+          <thead><tr><th>Division</th><th>ATS System</th><th>Actions</th></tr></thead>
+          <tbody id="ats-mapping-table"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -919,6 +931,7 @@ app.http('adminPortal', {
         }
         if (tab.dataset.tab === 'settings') {
           loadSettings();
+          loadAtsMappings();
         }
       });
     });
@@ -1576,6 +1589,82 @@ app.http('adminPortal', {
       }
     }
 
+    // =========== DIVISION ATS MAPPINGS ===========
+
+    async function loadAtsMappings() {
+      try {
+        var res = await fetch(API_BASE + '/division-ats-mappings');
+        var data = await res.json();
+        var mappings = data.mappings || [];
+        var divs = data.divisions || [];
+
+        var mappingMap = {};
+        mappings.forEach(function(m) { mappingMap[m.division_id] = m.ats_system; });
+
+        var tbody = document.getElementById('ats-mapping-table');
+        if (!divs.length) {
+          tbody.innerHTML = '<tr><td colspan="3" style="color:#6b7280;text-align:center;">No divisions found.</td></tr>';
+          return;
+        }
+        var html = '';
+        divs.forEach(function(d) {
+          var current = mappingMap[d.division_id] || '';
+          html += '<tr><td>' + d.division_name + '</td><td>' +
+            '<select id="ats-select-' + d.division_id + '" style="padding:0.3rem;border:1px solid #d1d5db;border-radius:4px;">' +
+            '<option value=""' + (current === '' ? ' selected' : '') + '>Not mapped</option>' +
+            '<option value="symplr"' + (current === 'symplr' ? ' selected' : '') + '>Symplr</option>' +
+            '<option value="bullhorn"' + (current === 'bullhorn' ? ' selected' : '') + '>Bullhorn</option>' +
+            '</select></td><td>' +
+            '<button class="btn btn-primary" onclick="saveAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Save</button> ' +
+            (current ? '<button class="btn btn-danger" onclick="removeAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Remove</button>' : '') +
+            '</td></tr>';
+        });
+        tbody.innerHTML = html;
+      } catch (err) {
+        document.getElementById('ats-mapping-table').innerHTML =
+          '<tr><td colspan="3" class="alert alert-error">Error: ' + err.message + '</td></tr>';
+      }
+    }
+
+    async function saveAtsMapping(divisionId) {
+      var atsSystem = document.getElementById('ats-select-' + divisionId).value;
+      if (!atsSystem) { showAlert('Select an ATS system first', 'error'); return; }
+      try {
+        var res = await fetch(API_BASE + '/division-ats-mappings/' + divisionId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ats_system: atsSystem })
+        });
+        var data = await res.json();
+        if (data.error) { showAlert(data.error, 'error'); return; }
+        showAlert('ATS mapping saved');
+        await loadAtsMappings();
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+    }
+
+    async function removeAtsMapping(divisionId) {
+      if (!confirm('Remove ATS mapping for this division?')) return;
+      try {
+        var res = await fetch(API_BASE + '/division-ats-mappings/' + divisionId, { method: 'DELETE' });
+        var data = await res.json();
+        if (data.error) { showAlert(data.error, 'error'); return; }
+        showAlert('ATS mapping removed');
+        await loadAtsMappings();
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+    }
+
+    async function syncDivisions() {
+      try {
+        showAlert('Syncing divisions from ATS...');
+        var res = await fetch(API_BASE + '/divisions/sync', { method: 'POST' });
+        var data = await res.json();
+        if (data.error) { showAlert(data.error, 'error'); return; }
+        showAlert('Sync complete: ' + data.created + ' new divisions created, ' + data.divisions.length + ' total');
+        await loadAtsMappings();
+        await loadDivisions();
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+    }
+
     // Initialize
     async function init() {
       await loadDivisions();
@@ -1964,6 +2053,79 @@ app.http('getFinancials', {
     } catch (error) {
       context.error('Error getting financial data:', error);
       return { status: 500, jsonBody: { error: 'Failed to get financial data' } };
+    }
+  }
+});
+
+// DIVISION SYNC
+
+app.http('syncDivisions', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'divisions/sync',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const created = await databaseService.syncDivisionsFromAts();
+      const divisions = await databaseService.getDivisions(true);
+      return { jsonBody: { created, divisions } };
+    } catch (error) {
+      context.error('Error syncing divisions:', error);
+      return { status: 500, jsonBody: { error: 'Failed to sync divisions from ATS' } };
+    }
+  }
+});
+
+// DIVISION ATS MAPPINGS
+
+app.http('getDivisionAtsMappings', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'division-ats-mappings',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const mappings = await databaseService.getDivisionAtsMappings();
+      const divisions = await databaseService.getDivisions(false);
+      return { jsonBody: { mappings, divisions } };
+    } catch (error) {
+      context.error('Error getting division ATS mappings:', error);
+      return { status: 500, jsonBody: { error: 'Failed to get division ATS mappings' } };
+    }
+  }
+});
+
+app.http('upsertDivisionAtsMapping', {
+  methods: ['PUT'],
+  authLevel: 'anonymous',
+  route: 'division-ats-mappings/{divisionId}',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const divisionId = parseInt(request.params.divisionId);
+      const body = await request.json() as any;
+      const atsSystem = body.ats_system;
+      if (!atsSystem || (atsSystem !== 'symplr' && atsSystem !== 'bullhorn')) {
+        return { status: 400, jsonBody: { error: 'ats_system must be "symplr" or "bullhorn"' } };
+      }
+      await databaseService.upsertDivisionAtsMapping(divisionId, atsSystem);
+      return { jsonBody: { success: true } };
+    } catch (error) {
+      context.error('Error upserting division ATS mapping:', error);
+      return { status: 500, jsonBody: { error: 'Failed to update division ATS mapping' } };
+    }
+  }
+});
+
+app.http('deleteDivisionAtsMapping', {
+  methods: ['DELETE'],
+  authLevel: 'anonymous',
+  route: 'division-ats-mappings/{divisionId}',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const divisionId = parseInt(request.params.divisionId);
+      await databaseService.deleteDivisionAtsMapping(divisionId);
+      return { jsonBody: { success: true } };
+    } catch (error) {
+      context.error('Error deleting division ATS mapping:', error);
+      return { status: 500, jsonBody: { error: 'Failed to delete division ATS mapping' } };
     }
   }
 });

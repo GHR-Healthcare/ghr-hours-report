@@ -775,6 +775,14 @@ class DatabaseService {
     return result.recordset[0]?.title || null;
   }
 
+  async getUserEmailFromCtmsync(userId: number): Promise<string | null> {
+    const pool = await this.getCtmsyncPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`SELECT email FROM dbo.users WHERE userid = @userId`);
+    return result.recordset[0]?.email || null;
+  }
+
   // Get user title from Bullhorn CorporateUser table
   async getUserTitleFromBullhorn(userId: number): Promise<string | null> {
     if (!this.bullhornConnectionString) return null;
@@ -785,17 +793,17 @@ class DatabaseService {
     return result.recordset[0]?.occupation || null;
   }
 
-  // Get user department name from Bullhorn
+  // Get user department name from Bullhorn using primaryDepartmentID on CorporateUser
   async getUserDepartmentFromBullhorn(userId: number): Promise<string | null> {
     if (!this.bullhornConnectionString) return null;
     const pool = await this.getBullhornPool();
     const result = await pool.request()
       .input('userId', sql.Int, userId)
       .query(`
-        SELECT TOP 1 cd.name AS department_name
-        FROM dbo.CorporateUserDepartments cud
-        INNER JOIN dbo.CorporationDepartment cd ON cud.departmentID = cd.corporationDepartmentID
-        WHERE cud.userID = @userId AND cud.isDeleted = 0 AND cd.isDeleted = 0
+        SELECT cd.name AS department_name
+        FROM dbo.CorporateUser cu
+        INNER JOIN dbo.CorporationDepartment cd ON cu.primaryDepartmentID = cd.corporationDepartmentID
+        WHERE cu.userID = @userId AND cd.isDeleted = 0
       `);
     return result.recordset[0]?.department_name || null;
   }
@@ -807,6 +815,44 @@ class DatabaseService {
       .input('name', sql.NVarChar(200), name)
       .query(`SELECT division_id FROM dbo.divisions WHERE LOWER(division_name) = LOWER(@name) AND is_active = 1`);
     return result.recordset[0]?.division_id || null;
+  }
+
+  /**
+   * Sync divisions from Bullhorn CorporationDepartment + Symplr static divisions.
+   * Creates any divisions that don't already exist in our divisions table.
+   * Returns the number of new divisions created.
+   */
+  async syncDivisionsFromAts(): Promise<number> {
+    // 1. Get all active department names from Bullhorn
+    const bullhornDepts: string[] = [];
+    if (this.bullhornConnectionString) {
+      const bhPool = await this.getBullhornPool();
+      const result = await bhPool.request().query(
+        `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND isEnabled = 1 AND name IS NOT NULL`
+      );
+      for (const row of result.recordset) {
+        if (row.name && row.name.trim()) bullhornDepts.push(row.name.trim());
+      }
+    }
+
+    // 2. Combine with Symplr static divisions
+    const allDivisionNames = [...bullhornDepts, 'Education', 'Non-Acute Nursing'];
+
+    // 3. Get existing divisions
+    const existing = await this.getDivisions(true);
+    const existingNames = new Set(existing.map(d => d.division_name.toLowerCase()));
+
+    // 4. Create any missing divisions
+    let created = 0;
+    for (const name of allDivisionNames) {
+      if (!existingNames.has(name.toLowerCase())) {
+        await this.createDivision({ division_name: name, display_order: 99 });
+        existingNames.add(name.toLowerCase());
+        created++;
+      }
+    }
+
+    return created;
   }
 
   // Get live hours by day for a week (for forecasting next week)
@@ -886,6 +932,27 @@ class DatabaseService {
       'SELECT division_id, ats_system FROM dbo.division_ats_mapping'
     );
     return result.recordset;
+  }
+
+  async upsertDivisionAtsMapping(divisionId: number, atsSystem: AtsSystem): Promise<void> {
+    const pool = await this.getPool();
+    await pool.request()
+      .input('divisionId', sql.Int, divisionId)
+      .input('atsSystem', sql.VarChar(20), atsSystem)
+      .query(`
+        MERGE dbo.division_ats_mapping AS target
+        USING (SELECT @divisionId AS division_id) AS source
+        ON target.division_id = source.division_id
+        WHEN MATCHED THEN UPDATE SET ats_system = @atsSystem
+        WHEN NOT MATCHED THEN INSERT (division_id, ats_system) VALUES (@divisionId, @atsSystem);
+      `);
+  }
+
+  async deleteDivisionAtsMapping(divisionId: number): Promise<void> {
+    const pool = await this.getPool();
+    await pool.request()
+      .input('divisionId', sql.Int, divisionId)
+      .query('DELETE FROM dbo.division_ats_mapping WHERE division_id = @divisionId');
   }
 
   async getSymplrPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {

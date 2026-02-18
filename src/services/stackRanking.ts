@@ -70,6 +70,15 @@ class StackRankingService {
           }
         } else {
           title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
+          // Infer Symplr division from email domain
+          const email = await databaseService.getUserEmailFromCtmsync(d.recruiter_user_id);
+          if (email && email.toLowerCase().includes('@ghreducation.com')) {
+            const eduDivId = await databaseService.findDivisionByName('Education');
+            if (eduDivId) divisionId = eduDivId;
+          } else {
+            const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
+            if (naDivId) divisionId = naDivId;
+          }
         }
 
         const role = this.inferRole(title);
@@ -97,48 +106,31 @@ class StackRankingService {
 
   /**
    * Calculate stack ranking for a given week.
-   * Queries each ATS mirror (filtered by division mapping), merges results,
+   * Queries both ATS systems, merges results,
    * computes GM$, GP%, ranks by GM$ descending, and compares to prior week.
    */
   async calculateRanking(
     weekStart: string,
     weekEnd: string
   ): Promise<{ rows: StackRankingRow[]; totals: StackRankingTotals }> {
-    // 1. Read division-to-ATS mappings
-    const mappings = await databaseService.getDivisionAtsMappings();
-    const symplrDivisions = new Set(
-      mappings.filter(m => m.ats_system === 'symplr').map(m => m.division_id)
-    );
-    const bullhornDivisions = new Set(
-      mappings.filter(m => m.ats_system === 'bullhorn').map(m => m.division_id)
-    );
-
-    // 2. Query each ATS mirror in parallel
+    // 1. Query both ATS systems in parallel
     const [symplrData, bullhornData] = await Promise.all([
-      symplrDivisions.size > 0
-        ? databaseService.getSymplrPlacementData(weekStart, weekEnd)
-        : Promise.resolve([] as PlacementData[]),
-      bullhornDivisions.size > 0
-        ? databaseService.getBullhornPlacementData(weekStart, weekEnd)
-        : Promise.resolve([] as PlacementData[]),
+      databaseService.getSymplrPlacementData(weekStart, weekEnd),
+      databaseService.getBullhornPlacementData(weekStart, weekEnd),
     ]);
 
-    // 3. Auto-discover new users (check ATS-specific columns)
+    // 2. Auto-discover new users (check ATS-specific columns)
     const checkedAtsIds = new Set<string>();
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
     await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
 
-    // 3b. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
+    // 3. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
       databaseService.getAtsIdToConfigMap('symplr'),
       databaseService.getAtsIdToConfigMap('bullhorn'),
     ]);
 
-    // 4. Filter by mapped divisions
-    const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
-    const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
-
-    // 5-6. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
+    // 4. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
     const configAggMap = new Map<number, {
       config: UserConfig;
       head_count: number;
@@ -162,11 +154,11 @@ class StackRankingService {
       }
     };
 
-    for (const d of filteredSymplr) {
+    for (const d of symplrData) {
       const config = symplrIdToConfig.get(d.recruiter_user_id);
       if (config) aggregatePlacement(d, config);
     }
-    for (const d of filteredBullhorn) {
+    for (const d of bullhornData) {
       const config = bullhornIdToConfig.get(d.recruiter_user_id);
       if (config) aggregatePlacement(d, config);
     }
@@ -245,31 +237,16 @@ class StackRankingService {
     weekStart: string,
     weekEnd: string
   ): Promise<{ rows: FinancialRow[]; totals: FinancialTotals }> {
-    const mappings = await databaseService.getDivisionAtsMappings();
-    const symplrDivisions = new Set(
-      mappings.filter(m => m.ats_system === 'symplr').map(m => m.division_id)
-    );
-    const bullhornDivisions = new Set(
-      mappings.filter(m => m.ats_system === 'bullhorn').map(m => m.division_id)
-    );
-
+    // Query both ATS systems in parallel
     const [symplrData, bullhornData] = await Promise.all([
-      symplrDivisions.size > 0
-        ? databaseService.getSymplrPlacementData(weekStart, weekEnd)
-        : Promise.resolve([] as PlacementData[]),
-      bullhornDivisions.size > 0
-        ? databaseService.getBullhornPlacementData(weekStart, weekEnd)
-        : Promise.resolve([] as PlacementData[]),
+      databaseService.getSymplrPlacementData(weekStart, weekEnd),
+      databaseService.getBullhornPlacementData(weekStart, weekEnd),
     ]);
 
     // Auto-discover new users from ATS data (same as calculateRanking)
     const checkedAtsIds = new Set<string>();
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
     await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
-
-    // Filter by mapped divisions
-    const filteredSymplr = symplrData.filter(d => symplrDivisions.has(d.division_id));
-    const filteredBullhorn = bullhornData.filter(d => bullhornDivisions.has(d.division_id));
 
     // Build ATS-to-config maps for resolving IDs (after discovery so new users are included)
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
@@ -301,11 +278,11 @@ class StackRankingService {
       }
     };
 
-    for (const d of filteredSymplr) {
+    for (const d of symplrData) {
       const config = symplrIdToConfig.get(d.recruiter_user_id);
       if (config) aggregateFin(d, config);
     }
-    for (const d of filteredBullhorn) {
+    for (const d of bullhornData) {
       const config = bullhornIdToConfig.get(d.recruiter_user_id);
       if (config) aggregateFin(d, config);
     }
