@@ -1155,6 +1155,7 @@ class DatabaseService {
         .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
         .query(`
+          SET DATEFIRST 7;
           WITH ActivePlacements AS (
             SELECT
               p.ownerID,
@@ -1168,7 +1169,7 @@ class DatabaseService {
             FROM dbo.Placement p
             WHERE p.dateBegin <= @weekEnd
               AND ISNULL(p.dateEnd, @weekEnd) >= @weekStart
-              AND p.status IN ('Started', 'Approved', 'Completed', 'Cleared')
+              AND p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
           ),
           PlacementDays AS (
             SELECT

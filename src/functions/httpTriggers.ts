@@ -1177,10 +1177,14 @@ app.http('adminPortal', {
 
         var rows = data.rows || [];
         var totals = data.totals || {};
+        var debug = data._debug || {};
         var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
         var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
-        var html = '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' ranked for ' + dates.weekStart + ' to ' + dates.weekEnd + '</p>';
+        var debugHtml = debug.symplrQueryRows !== undefined
+          ? '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + ' | Matched: Symplr ' + debug.symplrMatched + ', Bullhorn ' + debug.bullhornMatched + ' | Dropped: Symplr ' + debug.symplrDropped + ', Bullhorn ' + debug.bullhornDropped + '</p>'
+          : '';
+        var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' ranked for ' + dates.weekStart + ' to ' + dates.weekEnd + '</p>';
         html += '<table><thead><tr><th>Rank</th><th>Name</th><th>Division</th><th>HC</th><th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior</th></tr></thead><tbody>';
         rows.forEach(function(r) {
           var change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
@@ -1302,7 +1306,10 @@ app.http('adminPortal', {
           divisions[r.division_name].push(r);
         });
 
-        var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
+        var debugHtml = debug.symplrQueryRows !== undefined
+          ? '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config maps: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + '</p>'
+          : '';
+        var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
         html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:28%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:10%"></colgroup>';
         html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GM$</th><th style="' + hdrRight + '">GP%</th></tr></thead><tbody>';
 
@@ -1929,8 +1936,8 @@ app.http('getStackRanking', {
         weekEnd = boundaries.weekEnd;
       }
 
-      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
-      return { jsonBody: { weekStart, weekEnd, rows, totals } };
+      const { rows, totals, _debug } = await stackRankingService.calculateRanking(weekStart, weekEnd);
+      return { jsonBody: { weekStart, weekEnd, rows, totals, _debug } };
     } catch (error) {
       context.error('Error getting stack ranking:', error);
       const msg = error instanceof Error ? error.message : String(error);
@@ -2058,8 +2065,8 @@ app.http('getFinancials', {
         weekEnd = dEnd.toISOString().split('T')[0];
       }
 
-      const { rows, totals } = await stackRankingService.getFinancialData(weekStart, weekEnd);
-      return { jsonBody: { weekStart, weekEnd, rows, totals } };
+      const { rows, totals, _debug } = await stackRankingService.getFinancialData(weekStart, weekEnd);
+      return { jsonBody: { weekStart, weekEnd, rows, totals, _debug } };
     } catch (error) {
       context.error('Error getting financial data:', error);
       const msg = error instanceof Error ? error.message : String(error);

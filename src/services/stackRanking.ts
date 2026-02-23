@@ -115,12 +115,14 @@ class StackRankingService {
   async calculateRanking(
     weekStart: string,
     weekEnd: string
-  ): Promise<{ rows: StackRankingRow[]; totals: StackRankingTotals }> {
+  ): Promise<{ rows: StackRankingRow[]; totals: StackRankingTotals; _debug?: Record<string, unknown> }> {
     // 1. Query both ATS systems in parallel
     const [symplrData, bullhornData] = await Promise.all([
       databaseService.getSymplrPlacementData(weekStart, weekEnd),
       databaseService.getBullhornPlacementData(weekStart, weekEnd),
     ]);
+
+    console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
     // 2. Auto-discover new users (check ATS-specific columns)
     const checkedAtsIds = new Set<string>();
@@ -132,6 +134,8 @@ class StackRankingService {
       databaseService.getAtsIdToConfigMap('symplr'),
       databaseService.getAtsIdToConfigMap('bullhorn'),
     ]);
+
+    console.log(`Config maps: Symplr has ${symplrIdToConfig.size} entries, Bullhorn has ${bullhornIdToConfig.size} entries`);
 
     // 4. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
     const configAggMap = new Map<number, {
@@ -157,14 +161,29 @@ class StackRankingService {
       }
     };
 
+    let symplrMatched = 0, symplrDropped = 0;
     for (const d of symplrData) {
       const config = symplrIdToConfig.get(d.recruiter_user_id);
-      if (config) aggregatePlacement(d, config);
+      if (config) { aggregatePlacement(d, config); symplrMatched++; }
+      else { symplrDropped++; console.warn(`Symplr user ${d.recruiter_user_id} (${d.recruiter_name}) has no config match`); }
     }
+    let bullhornMatched = 0, bullhornDropped = 0;
     for (const d of bullhornData) {
       const config = bullhornIdToConfig.get(d.recruiter_user_id);
-      if (config) aggregatePlacement(d, config);
+      if (config) { aggregatePlacement(d, config); bullhornMatched++; }
+      else { bullhornDropped++; console.warn(`Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}) has no config match`); }
     }
+
+    const _debug = {
+      symplrQueryRows: symplrData.length,
+      bullhornQueryRows: bullhornData.length,
+      symplrConfigMapSize: symplrIdToConfig.size,
+      bullhornConfigMapSize: bullhornIdToConfig.size,
+      symplrMatched,
+      symplrDropped,
+      bullhornMatched,
+      bullhornDropped,
+    };
 
     // 7. Compute GM$, GP%, Revenue (only for on_stack_ranking users)
     const divisions = await databaseService.getDivisions(false);
@@ -229,22 +248,24 @@ class StackRankingService {
     // 12. Save this week's snapshot
     await databaseService.saveStackRankingSnapshot(weekStart, rows);
 
-    return { rows, totals };
+    return { rows, totals, _debug };
   }
 
   /**
    * Get financial data for all users (no ranking, no on_stack_ranking filter).
-   * Returns per-user totals: bill, pay, GP$, GM%.
+   * Returns per-user totals: bill, pay, GM$, GP%.
    */
   async getFinancialData(
     weekStart: string,
     weekEnd: string
-  ): Promise<{ rows: FinancialRow[]; totals: FinancialTotals }> {
+  ): Promise<{ rows: FinancialRow[]; totals: FinancialTotals; _debug?: Record<string, unknown> }> {
     // Query both ATS systems in parallel
     const [symplrData, bullhornData] = await Promise.all([
       databaseService.getSymplrPlacementData(weekStart, weekEnd),
       databaseService.getBullhornPlacementData(weekStart, weekEnd),
     ]);
+
+    console.log(`Financials: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
     // Auto-discover new users from ATS data (same as calculateRanking)
     const checkedAtsIds = new Set<string>();
@@ -298,6 +319,16 @@ class StackRankingService {
       aggregateFin(d, 'bullhorn');
     }
 
+    console.log(`Financials: Config maps - Symplr: ${symplrIdToConfig.size}, Bullhorn: ${bullhornIdToConfig.size}. Aggregated ${aggMap.size} unique users.`);
+
+    const _debug = {
+      symplrQueryRows: symplrData.length,
+      bullhornQueryRows: bullhornData.length,
+      symplrConfigMapSize: symplrIdToConfig.size,
+      bullhornConfigMapSize: bullhornIdToConfig.size,
+      aggregatedUsers: aggMap.size,
+    };
+
     // Compute GM$, GP% for each user
     const divs = await databaseService.getDivisions(false);
     const divNameMap = new Map(divs.map(d => [d.division_id, d.division_name]));
@@ -334,7 +365,7 @@ class StackRankingService {
       ? Math.round((totals.total_gm_dollars / totals.total_bill) * 100 * 100) / 100
       : 0;
 
-    return { rows, totals };
+    return { rows, totals, _debug };
   }
 
   /**
