@@ -1933,7 +1933,8 @@ app.http('getStackRanking', {
       return { jsonBody: { weekStart, weekEnd, rows, totals } };
     } catch (error) {
       context.error('Error getting stack ranking:', error);
-      return { status: 500, jsonBody: { error: 'Failed to get stack ranking' } };
+      const msg = error instanceof Error ? error.message : String(error);
+      return { status: 500, jsonBody: { error: 'Failed to get stack ranking: ' + msg } };
     }
   }
 });
@@ -2061,7 +2062,8 @@ app.http('getFinancials', {
       return { jsonBody: { weekStart, weekEnd, rows, totals } };
     } catch (error) {
       context.error('Error getting financial data:', error);
-      return { status: 500, jsonBody: { error: 'Failed to get financial data' } };
+      const msg = error instanceof Error ? error.message : String(error);
+      return { status: 500, jsonBody: { error: 'Failed to get financial data: ' + msg } };
     }
   }
 });
