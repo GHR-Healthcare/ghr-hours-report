@@ -926,7 +926,6 @@ app.http('adminPortal', {
         }
         if (tab.dataset.tab === 'financials') {
           getFinancialsDates();
-          loadFinancials();
         }
         if (tab.dataset.tab === 'user-admin') {
           loadUsers();
@@ -1289,6 +1288,7 @@ app.http('adminPortal', {
 
         var rows = data.rows || [];
         var totals = data.totals || {};
+        var debug = data._debug || {};
         var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
         var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
