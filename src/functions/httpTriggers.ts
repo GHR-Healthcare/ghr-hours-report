@@ -1304,7 +1304,7 @@ app.http('adminPortal', {
 
         var html = '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
         html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:28%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:10%"></colgroup>';
-        html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GP$</th><th style="' + hdrRight + '">GM%</th></tr></thead><tbody>';
+        html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GM$</th><th style="' + hdrRight + '">GP%</th></tr></thead><tbody>';
 
         divisionOrder.forEach(function(divName) {
           var divRows = divisions[divName];
@@ -1320,8 +1320,8 @@ app.http('adminPortal', {
               '<td style="' + numStyle + '">' + r.head_count + '</td>' +
               '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
               '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
-              '<td style="' + numStyle + '">' + fmtMoney(r.gross_profit_dollars) + '</td>' +
-              '<td style="' + numStyle + '">' + fmtPct(r.gross_margin_pct) + '</td></tr>';
+              '<td style="' + numStyle + '">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+              '<td style="' + numStyle + '">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
           });
           // Division subtotals
           var divGP = divBill - divPay;
@@ -1339,8 +1339,8 @@ app.http('adminPortal', {
           '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtMoney(totals.total_gp_dollars) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtPct(totals.overall_gm_pct) + '</td></tr>';
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
         html += '</tbody></table>';
         results.innerHTML = html;
       } catch (err) {

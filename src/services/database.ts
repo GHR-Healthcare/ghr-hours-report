@@ -475,12 +475,13 @@ class DatabaseService {
     }
   }
 
-  async getAtsIdToConfigMap(atsSystem: AtsSystem): Promise<Map<number, UserConfig>> {
+  async getAtsIdToConfigMap(atsSystem: AtsSystem, includeInactive = false): Promise<Map<number, UserConfig>> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
+    const activeFilter = includeInactive ? '' : ' AND is_active = 1';
     try {
       const result = await pool.request()
-        .query(`SELECT * FROM dbo.user_config WHERE ${column} IS NOT NULL AND is_active = 1`);
+        .query(`SELECT * FROM dbo.user_config WHERE ${column} IS NOT NULL${activeFilter}`);
       const map = new Map<number, UserConfig>();
       for (const row of result.recordset) {
         const atsId = atsSystem === 'symplr' ? row.symplr_user_id : row.bullhorn_user_id;
@@ -489,7 +490,7 @@ class DatabaseService {
       return map;
     } catch {
       // Columns may not exist yet — fall back to user_id + ats_source
-      const configs = await this.getUserConfigs(false);
+      const configs = await this.getUserConfigs(includeInactive);
       const map = new Map<number, UserConfig>();
       for (const config of configs) {
         if (config.ats_source === atsSystem || (atsSystem === 'symplr' && !config.ats_source)) {

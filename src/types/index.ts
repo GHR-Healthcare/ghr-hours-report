@@ -215,16 +215,16 @@ export interface FinancialRow {
   head_count: number;
   total_bill: number;
   total_pay: number;
-  gross_profit_dollars: number;
-  gross_margin_pct: number;
+  gross_margin_dollars: number;
+  gross_profit_pct: number;
 }
 
 export interface FinancialTotals {
   total_head_count: number;
   total_bill: number;
   total_pay: number;
-  total_gp_dollars: number;
-  overall_gm_pct: number;
+  total_gm_dollars: number;
+  overall_gp_pct: number;
 }
 
 export interface StackRankingRow {

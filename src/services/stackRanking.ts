@@ -77,7 +77,7 @@ class StackRankingService {
           if (email && email.toLowerCase().includes('@ghreducation.com')) {
             const eduDivId = await databaseService.findDivisionByName('Education');
             if (eduDivId) divisionId = eduDivId;
-          } else {
+          } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
             const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
             if (naDivId) divisionId = naDivId;
           }
@@ -251,29 +251,39 @@ class StackRankingService {
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
     await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
 
-    // Build ATS-to-config maps for resolving IDs (after discovery so new users are included)
+    // Build ATS-to-config maps — include inactive users since financials shows everyone
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
-      databaseService.getAtsIdToConfigMap('symplr'),
-      databaseService.getAtsIdToConfigMap('bullhorn'),
+      databaseService.getAtsIdToConfigMap('symplr', true),
+      databaseService.getAtsIdToConfigMap('bullhorn', true),
     ]);
 
-    // Aggregate by config_id (not ATS user_id)
-    const configAggMap = new Map<number, {
-      config: UserConfig;
+    // Aggregate by config_id when known, or by a synthetic key for unknown users
+    // This ensures ALL users with placement data appear in financials
+    const aggMap = new Map<string, {
+      recruiter_user_id: number;
+      recruiter_name: string;
+      division_id: number;
       head_count: number;
       total_bill_amount: number;
       total_pay_amount: number;
     }>();
 
-    const aggregateFin = (d: PlacementData, config: UserConfig) => {
-      const existing = configAggMap.get(config.config_id);
+    const aggregateFin = (d: PlacementData, atsSystem: AtsSystem) => {
+      const configMap = atsSystem === 'symplr' ? symplrIdToConfig : bullhornIdToConfig;
+      const config = configMap.get(d.recruiter_user_id);
+      // Use config_id as key if known, otherwise use ats:userId to avoid collisions
+      const key = config ? `config:${config.config_id}` : `${atsSystem}:${d.recruiter_user_id}`;
+
+      const existing = aggMap.get(key);
       if (existing) {
         existing.head_count += d.head_count;
         existing.total_bill_amount += d.total_bill_amount;
         existing.total_pay_amount += d.total_pay_amount;
       } else {
-        configAggMap.set(config.config_id, {
-          config,
+        aggMap.set(key, {
+          recruiter_user_id: config ? config.user_id : d.recruiter_user_id,
+          recruiter_name: config ? config.user_name : d.recruiter_name,
+          division_id: config ? config.division_id : d.division_id,
           head_count: d.head_count,
           total_bill_amount: d.total_bill_amount,
           total_pay_amount: d.total_pay_amount,
@@ -282,48 +292,46 @@ class StackRankingService {
     };
 
     for (const d of symplrData) {
-      const config = symplrIdToConfig.get(d.recruiter_user_id);
-      if (config) aggregateFin(d, config);
+      aggregateFin(d, 'symplr');
     }
     for (const d of bullhornData) {
-      const config = bullhornIdToConfig.get(d.recruiter_user_id);
-      if (config) aggregateFin(d, config);
+      aggregateFin(d, 'bullhorn');
     }
 
-    // Compute GP$, GM% for each user
+    // Compute GM$, GP% for each user
     const divs = await databaseService.getDivisions(false);
     const divNameMap = new Map(divs.map(d => [d.division_id, d.division_name]));
     const rows: FinancialRow[] = [];
-    for (const [, agg] of configAggMap) {
-      const gpDollars = agg.total_bill_amount - agg.total_pay_amount;
-      const gmPct = agg.total_bill_amount > 0 ? (gpDollars / agg.total_bill_amount) * 100 : 0;
+    for (const [, agg] of aggMap) {
+      const gmDollars = agg.total_bill_amount - agg.total_pay_amount;
+      const gpPct = agg.total_bill_amount > 0 ? (gmDollars / agg.total_bill_amount) * 100 : 0;
 
       rows.push({
-        recruiter_user_id: agg.config.user_id,
-        recruiter_name: agg.config.user_name,
-        division_name: divNameMap.get(agg.config.division_id) || 'Unknown',
+        recruiter_user_id: agg.recruiter_user_id,
+        recruiter_name: agg.recruiter_name,
+        division_name: divNameMap.get(agg.division_id) || 'Unknown',
         head_count: agg.head_count,
         total_bill: Math.round(agg.total_bill_amount * 100) / 100,
         total_pay: Math.round(agg.total_pay_amount * 100) / 100,
-        gross_profit_dollars: Math.round(gpDollars * 100) / 100,
-        gross_margin_pct: Math.round(gmPct * 100) / 100,
+        gross_margin_dollars: Math.round(gmDollars * 100) / 100,
+        gross_profit_pct: Math.round(gpPct * 100) / 100,
       });
     }
 
-    // Sort by GP$ descending
-    rows.sort((a, b) => b.gross_profit_dollars - a.gross_profit_dollars);
+    // Sort by GM$ descending
+    rows.sort((a, b) => b.gross_margin_dollars - a.gross_margin_dollars);
 
     // Compute totals
     const totals: FinancialTotals = {
       total_head_count: rows.reduce((sum, r) => sum + r.head_count, 0),
       total_bill: Math.round(rows.reduce((sum, r) => sum + r.total_bill, 0) * 100) / 100,
       total_pay: Math.round(rows.reduce((sum, r) => sum + r.total_pay, 0) * 100) / 100,
-      total_gp_dollars: 0,
-      overall_gm_pct: 0,
+      total_gm_dollars: 0,
+      overall_gp_pct: 0,
     };
-    totals.total_gp_dollars = Math.round((totals.total_bill - totals.total_pay) * 100) / 100;
-    totals.overall_gm_pct = totals.total_bill > 0
-      ? Math.round((totals.total_gp_dollars / totals.total_bill) * 100 * 100) / 100
+    totals.total_gm_dollars = Math.round((totals.total_bill - totals.total_pay) * 100) / 100;
+    totals.overall_gp_pct = totals.total_bill > 0
+      ? Math.round((totals.total_gm_dollars / totals.total_bill) * 100 * 100) / 100
       : 0;
 
     return { rows, totals };
