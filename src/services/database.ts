@@ -26,7 +26,7 @@ class DatabaseService {
   private bullhornPool: sql.ConnectionPool | null = null;
   private config: sql.config;
   private ctmsyncConfig: sql.config;
-  private bullhornConnectionString: string;
+  private bullhornConfig: sql.config | null = null;
 
   constructor() {
     // Main hours_report database
@@ -55,8 +55,32 @@ class DatabaseService {
       }
     };
 
-    // Bullhorn mirror database (separate server, single connection string)
-    this.bullhornConnectionString = process.env.BULLHORN_CONNECTION_STRING || '';
+    // Bullhorn mirror database — parse ADO.NET connection string into config object
+    const bhConnStr = process.env.BULLHORN_CONNECTION_STRING || '';
+    if (bhConnStr) {
+      const parts = new Map<string, string>();
+      bhConnStr.split(';').forEach(part => {
+        const eq = part.indexOf('=');
+        if (eq > 0) parts.set(part.substring(0, eq).trim().toLowerCase(), part.substring(eq + 1).trim());
+      });
+      const serverRaw = parts.get('server') || parts.get('data source') || '';
+      // Handle "tcp:host,port" format
+      const serverClean = serverRaw.replace(/^tcp:/i, '');
+      const [host, portStr] = serverClean.includes(',') ? serverClean.split(',') : [serverClean, '1433'];
+      this.bullhornConfig = {
+        server: host,
+        port: parseInt(portStr, 10) || 1433,
+        database: parts.get('initial catalog') || parts.get('database') || '',
+        user: parts.get('user id') || parts.get('uid') || '',
+        password: parts.get('password') || parts.get('pwd') || '',
+        requestTimeout: 600000,
+        connectionTimeout: 30000,
+        options: {
+          encrypt: (parts.get('encrypt') || 'true').toLowerCase() === 'true',
+          trustServerCertificate: (parts.get('trustservercertificate') || 'false').toLowerCase() === 'true',
+        }
+      };
+    }
   }
 
   async getPool(): Promise<sql.ConnectionPool> {
@@ -75,7 +99,8 @@ class DatabaseService {
 
   async getBullhornPool(): Promise<sql.ConnectionPool> {
     if (!this.bullhornPool) {
-      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConnectionString).connect();
+      if (!this.bullhornConfig) throw new Error('Bullhorn connection not configured');
+      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
     }
     return this.bullhornPool;
   }
@@ -869,7 +894,7 @@ class DatabaseService {
   }
 
   async getUserEmailFromBullhorn(userId: number): Promise<string | null> {
-    if (!this.bullhornConnectionString) return null;
+    if (!this.bullhornConfig) return null;
     try {
       const pool = await this.getBullhornPool();
       const result = await pool.request()
@@ -883,7 +908,7 @@ class DatabaseService {
 
   // Get user title from Bullhorn CorporateUser table
   async getUserTitleFromBullhorn(userId: number): Promise<string | null> {
-    if (!this.bullhornConnectionString) return null;
+    if (!this.bullhornConfig) return null;
     const pool = await this.getBullhornPool();
     const result = await pool.request()
       .input('userId', sql.Int, userId)
@@ -893,7 +918,7 @@ class DatabaseService {
 
   // Get user department name from Bullhorn using primaryDepartmentID on CorporateUser
   async getUserDepartmentFromBullhorn(userId: number): Promise<string | null> {
-    if (!this.bullhornConnectionString) return null;
+    if (!this.bullhornConfig) return null;
     const pool = await this.getBullhornPool();
     const result = await pool.request()
       .input('userId', sql.Int, userId)
@@ -923,7 +948,7 @@ class DatabaseService {
   async syncDivisionsFromAts(): Promise<number> {
     // 1. Get all active department names from Bullhorn
     const bullhornDepts: string[] = [];
-    if (this.bullhornConnectionString) {
+    if (this.bullhornConfig) {
       const bhPool = await this.getBullhornPool();
       const result = await bhPool.request().query(
         `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND isEnabled = 1 AND name IS NOT NULL`
@@ -1103,86 +1128,96 @@ class DatabaseService {
   }
 
   async getBullhornPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
-    if (!this.bullhornConnectionString) {
+    if (!this.bullhornConfig) {
       console.warn('Bullhorn connection not configured, skipping');
       return [];
     }
 
-    const pool = await this.getBullhornPool();
+    try {
+      const pool = await this.getBullhornPool();
 
-    // Get recruiter-to-division mapping from hours_report DB using bullhorn_user_id
-    const bullhornMap = await this.getAtsIdToConfigMap('bullhorn');
-    const divisions = await this.getDivisions(false);
-    const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
-    const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
-    for (const [atsId, config] of bullhornMap) {
-      recruiterDivisionMap.set(atsId, {
-        division_id: config.division_id,
-        division_name: divisionMap.get(config.division_id) || 'Unknown'
+      // Get recruiter-to-division mapping from hours_report DB using bullhorn_user_id
+      const bullhornMap = await this.getAtsIdToConfigMap('bullhorn');
+      const divisions = await this.getDivisions(false);
+      const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
+      const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
+      for (const [atsId, config] of bullhornMap) {
+        recruiterDivisionMap.set(atsId, {
+          division_id: config.division_id,
+          division_name: divisionMap.get(config.division_id) || 'Unknown'
+        });
+      }
+
+      // Query placements active during the week
+      // Calculate weekday overlap and multiply by hoursPerDay * rates
+      const result = await pool.request()
+        .input('weekStart', sql.Date, weekStart)
+        .input('weekEnd', sql.Date, weekEnd)
+        .query(`
+          WITH ActivePlacements AS (
+            SELECT
+              p.ownerID,
+              p.candidateID,
+              p.clientBillRate,
+              p.payRate,
+              p.hoursPerDay,
+              -- Calculate overlap start/end with the query week
+              CASE WHEN p.dateBegin > @weekStart THEN CAST(p.dateBegin AS DATE) ELSE @weekStart END AS overlap_start,
+              CASE WHEN ISNULL(p.dateEnd, @weekEnd) < @weekEnd THEN CAST(p.dateEnd AS DATE) ELSE @weekEnd END AS overlap_end
+            FROM dbo.Placement p
+            WHERE p.dateBegin <= @weekEnd
+              AND ISNULL(p.dateEnd, @weekEnd) >= @weekStart
+              AND p.status IN ('Started', 'Approved', 'Completed', 'Cleared')
+          ),
+          PlacementDays AS (
+            SELECT
+              ownerID,
+              candidateID,
+              clientBillRate,
+              payRate,
+              hoursPerDay,
+              -- Count weekdays in the overlap period
+              DATEDIFF(dd, overlap_start, overlap_end) + 1
+              - (DATEDIFF(wk, overlap_start, overlap_end) * 2)
+              - CASE WHEN DATEPART(dw, overlap_start) = 1 THEN 1 ELSE 0 END
+              - CASE WHEN DATEPART(dw, overlap_end) = 7 THEN 1 ELSE 0 END
+              AS weekdays
+            FROM ActivePlacements
+            WHERE overlap_start <= overlap_end
+          )
+          SELECT
+            pd.ownerID AS recruiter_user_id,
+            cu.firstName + ' ' + cu.lastName AS recruiter_name,
+            COUNT(DISTINCT pd.candidateID) AS head_count,
+            SUM(ISNULL(pd.clientBillRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_bill_amount,
+            SUM(ISNULL(pd.payRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_pay_amount
+          FROM PlacementDays pd
+          INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.corporateUserID
+          WHERE pd.weekdays > 0
+          GROUP BY pd.ownerID, cu.firstName, cu.lastName
+        `);
+
+      return result.recordset.map((row: any) => {
+        const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
+        return {
+          recruiter_user_id: row.recruiter_user_id,
+          recruiter_name: row.recruiter_name,
+          division_id: divInfo?.division_id || 0,
+          division_name: divInfo?.division_name || 'Unknown',
+          head_count: row.head_count || 0,
+          total_bill_amount: row.total_bill_amount || 0,
+          total_pay_amount: row.total_pay_amount || 0,
+        };
       });
+    } catch (err) {
+      console.error('Bullhorn placement query failed, returning empty:', err);
+      // Reset the pool so next attempt tries a fresh connection
+      if (this.bullhornPool) {
+        try { await this.bullhornPool.close(); } catch { /* ignore */ }
+        this.bullhornPool = null;
+      }
+      return [];
     }
-
-    // Query placements active during the week
-    // Calculate weekday overlap and multiply by hoursPerDay * rates
-    const result = await pool.request()
-      .input('weekStart', sql.Date, weekStart)
-      .input('weekEnd', sql.Date, weekEnd)
-      .query(`
-        WITH ActivePlacements AS (
-          SELECT
-            p.ownerID,
-            p.candidateID,
-            p.clientBillRate,
-            p.payRate,
-            p.hoursPerDay,
-            -- Calculate overlap start/end with the query week
-            CASE WHEN p.dateBegin > @weekStart THEN CAST(p.dateBegin AS DATE) ELSE @weekStart END AS overlap_start,
-            CASE WHEN ISNULL(p.dateEnd, @weekEnd) < @weekEnd THEN CAST(p.dateEnd AS DATE) ELSE @weekEnd END AS overlap_end
-          FROM dbo.Placement p
-          WHERE p.dateBegin <= @weekEnd
-            AND ISNULL(p.dateEnd, @weekEnd) >= @weekStart
-            AND p.status IN ('Started', 'Approved', 'Completed', 'Cleared')
-        ),
-        PlacementDays AS (
-          SELECT
-            ownerID,
-            candidateID,
-            clientBillRate,
-            payRate,
-            hoursPerDay,
-            -- Count weekdays in the overlap period
-            DATEDIFF(dd, overlap_start, overlap_end) + 1
-            - (DATEDIFF(wk, overlap_start, overlap_end) * 2)
-            - CASE WHEN DATEPART(dw, overlap_start) = 1 THEN 1 ELSE 0 END
-            - CASE WHEN DATEPART(dw, overlap_end) = 7 THEN 1 ELSE 0 END
-            AS weekdays
-          FROM ActivePlacements
-          WHERE overlap_start <= overlap_end
-        )
-        SELECT
-          pd.ownerID AS recruiter_user_id,
-          cu.firstName + ' ' + cu.lastName AS recruiter_name,
-          COUNT(DISTINCT pd.candidateID) AS head_count,
-          SUM(ISNULL(pd.clientBillRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_bill_amount,
-          SUM(ISNULL(pd.payRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_pay_amount
-        FROM PlacementDays pd
-        INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.corporateUserID
-        WHERE pd.weekdays > 0
-        GROUP BY pd.ownerID, cu.firstName, cu.lastName
-      `);
-
-    return result.recordset.map((row: any) => {
-      const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
-      return {
-        recruiter_user_id: row.recruiter_user_id,
-        recruiter_name: row.recruiter_name,
-        division_id: divInfo?.division_id || 0,
-        division_name: divInfo?.division_name || 'Unknown',
-        head_count: row.head_count || 0,
-        total_bill_amount: row.total_bill_amount || 0,
-        total_pay_amount: row.total_pay_amount || 0,
-      };
-    });
   }
 
   async saveStackRankingSnapshot(weekStart: string, rows: StackRankingRow[]): Promise<void> {
