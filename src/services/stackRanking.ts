@@ -59,10 +59,12 @@ class StackRankingService {
 
       try {
         let title: string | null = null;
+        let email: string | null = null;
         let divisionId = d.division_id || 1;
 
         if (atsSystem === 'bullhorn') {
           title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
+          email = await databaseService.getUserEmailFromBullhorn(d.recruiter_user_id);
           const deptName = await databaseService.getUserDepartmentFromBullhorn(d.recruiter_user_id);
           if (deptName) {
             const matchedDivId = await databaseService.findDivisionByName(deptName);
@@ -70,8 +72,8 @@ class StackRankingService {
           }
         } else {
           title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
+          email = await databaseService.getUserEmailFromCtmsync(d.recruiter_user_id);
           // Infer Symplr division from email domain
-          const email = await databaseService.getUserEmailFromCtmsync(d.recruiter_user_id);
           if (email && email.toLowerCase().includes('@ghreducation.com')) {
             const eduDivId = await databaseService.findDivisionByName('Education');
             if (eduDivId) divisionId = eduDivId;
@@ -89,6 +91,7 @@ class StackRankingService {
           division_id: divisionId,
           role,
           title: title || undefined,
+          email: email || undefined,
           ats_source: atsSystem,
           symplr_user_id: atsSystem === 'symplr' ? d.recruiter_user_id : undefined,
           bullhorn_user_id: atsSystem === 'bullhorn' ? d.recruiter_user_id : undefined,

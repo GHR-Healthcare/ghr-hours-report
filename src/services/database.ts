@@ -253,25 +253,47 @@ class DatabaseService {
     const symplrId = data.symplr_user_id ?? null;
     const bullhornId = data.bullhorn_user_id ?? null;
     const canonicalUserId = data.user_id || symplrId || bullhornId || 0;
-    const result = await pool.request()
-      .input('userId', sql.Int, canonicalUserId)
-      .input('userName', sql.NVarChar(200), data.user_name)
-      .input('divisionId', sql.Int, data.division_id)
-      .input('role', sql.VarChar(50), data.role || 'unknown')
-      .input('title', sql.NVarChar(200), data.title || null)
-      .input('atsSource', sql.VarChar(20), data.ats_source || null)
-      .input('symplrUserId', sql.Int, symplrId)
-      .input('bullhornUserId', sql.Int, bullhornId)
-      .input('weeklyGoal', sql.Int, data.weekly_goal || 0)
-      .input('onHoursReport', sql.Bit, data.on_hours_report ?? false)
-      .input('onStackRanking', sql.Bit, data.on_stack_ranking ?? false)
-      .input('displayOrder', sql.Int, data.display_order || 99)
-      .query(`
-        INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, ats_source, symplr_user_id, bullhorn_user_id, weekly_goal, on_hours_report, on_stack_ranking, display_order)
-        OUTPUT INSERTED.*
-        VALUES (@userId, @userName, @divisionId, @role, @title, @atsSource, @symplrUserId, @bullhornUserId, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
-      `);
-    return result.recordset[0];
+    try {
+      const result = await pool.request()
+        .input('userId', sql.Int, canonicalUserId)
+        .input('userName', sql.NVarChar(200), data.user_name)
+        .input('divisionId', sql.Int, data.division_id)
+        .input('role', sql.VarChar(50), data.role || 'unknown')
+        .input('title', sql.NVarChar(200), data.title || null)
+        .input('email', sql.NVarChar(200), data.email || null)
+        .input('atsSource', sql.VarChar(20), data.ats_source || null)
+        .input('symplrUserId', sql.Int, symplrId)
+        .input('bullhornUserId', sql.Int, bullhornId)
+        .input('weeklyGoal', sql.Int, data.weekly_goal || 0)
+        .input('onHoursReport', sql.Bit, data.on_hours_report ?? false)
+        .input('onStackRanking', sql.Bit, data.on_stack_ranking ?? false)
+        .input('displayOrder', sql.Int, data.display_order || 99)
+        .query(`
+          INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, email, ats_source, symplr_user_id, bullhorn_user_id, weekly_goal, on_hours_report, on_stack_ranking, display_order)
+          OUTPUT INSERTED.*
+          VALUES (@userId, @userName, @divisionId, @role, @title, @email, @atsSource, @symplrUserId, @bullhornUserId, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
+        `);
+      return result.recordset[0];
+    } catch {
+      // ATS ID or email columns may not exist yet — insert without them
+      const result = await pool.request()
+        .input('userId', sql.Int, canonicalUserId)
+        .input('userName', sql.NVarChar(200), data.user_name)
+        .input('divisionId', sql.Int, data.division_id)
+        .input('role', sql.VarChar(50), data.role || 'unknown')
+        .input('title', sql.NVarChar(200), data.title || null)
+        .input('atsSource', sql.VarChar(20), data.ats_source || null)
+        .input('weeklyGoal', sql.Int, data.weekly_goal || 0)
+        .input('onHoursReport', sql.Bit, data.on_hours_report ?? false)
+        .input('onStackRanking', sql.Bit, data.on_stack_ranking ?? false)
+        .input('displayOrder', sql.Int, data.display_order || 99)
+        .query(`
+          INSERT INTO dbo.user_config (user_id, user_name, division_id, role, title, ats_source, weekly_goal, on_hours_report, on_stack_ranking, display_order)
+          OUTPUT INSERTED.*
+          VALUES (@userId, @userName, @divisionId, @role, @title, @atsSource, @weeklyGoal, @onHoursReport, @onStackRanking, @displayOrder)
+        `);
+      return result.recordset[0];
+    }
   }
 
   async updateUserConfig(data: UpdateUserConfigRequest): Promise<UserConfig | null> {
@@ -294,6 +316,10 @@ class DatabaseService {
     if (data.title !== undefined) {
       updates.push('title = @title');
       request.input('title', sql.NVarChar(200), data.title);
+    }
+    if (data.email !== undefined) {
+      updates.push('email = @email');
+      request.input('email', sql.NVarChar(200), data.email);
     }
     if (data.weekly_goal !== undefined) {
       updates.push('weekly_goal = @weeklyGoal');
@@ -366,32 +392,60 @@ class DatabaseService {
   async userConfigExistsByAtsId(atsSystem: AtsSystem, atsUserId: number): Promise<boolean> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
-    const result = await pool.request()
-      .input('atsUserId', sql.Int, atsUserId)
-      .query(`SELECT 1 FROM dbo.user_config WHERE ${column} = @atsUserId`);
-    return result.recordset.length > 0;
+    try {
+      const result = await pool.request()
+        .input('atsUserId', sql.Int, atsUserId)
+        .query(`SELECT 1 FROM dbo.user_config WHERE ${column} = @atsUserId`);
+      return result.recordset.length > 0;
+    } catch {
+      // Column may not exist yet — fall back to user_id check
+      const result = await pool.request()
+        .input('atsUserId', sql.Int, atsUserId)
+        .query('SELECT 1 FROM dbo.user_config WHERE user_id = @atsUserId');
+      return result.recordset.length > 0;
+    }
   }
 
   async getUserConfigByAtsId(atsSystem: AtsSystem, atsUserId: number): Promise<UserConfig | null> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
-    const result = await pool.request()
-      .input('atsUserId', sql.Int, atsUserId)
-      .query(`SELECT * FROM dbo.user_config WHERE ${column} = @atsUserId`);
-    return result.recordset[0] || null;
+    try {
+      const result = await pool.request()
+        .input('atsUserId', sql.Int, atsUserId)
+        .query(`SELECT * FROM dbo.user_config WHERE ${column} = @atsUserId`);
+      return result.recordset[0] || null;
+    } catch {
+      // Column may not exist yet — fall back to user_id
+      const result = await pool.request()
+        .input('atsUserId', sql.Int, atsUserId)
+        .query('SELECT * FROM dbo.user_config WHERE user_id = @atsUserId');
+      return result.recordset[0] || null;
+    }
   }
 
   async getAtsIdToConfigMap(atsSystem: AtsSystem): Promise<Map<number, UserConfig>> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
-    const result = await pool.request()
-      .query(`SELECT * FROM dbo.user_config WHERE ${column} IS NOT NULL AND is_active = 1`);
-    const map = new Map<number, UserConfig>();
-    for (const row of result.recordset) {
-      const atsId = atsSystem === 'symplr' ? row.symplr_user_id : row.bullhorn_user_id;
-      if (atsId != null) map.set(atsId, row);
+    try {
+      const result = await pool.request()
+        .query(`SELECT * FROM dbo.user_config WHERE ${column} IS NOT NULL AND is_active = 1`);
+      const map = new Map<number, UserConfig>();
+      for (const row of result.recordset) {
+        const atsId = atsSystem === 'symplr' ? row.symplr_user_id : row.bullhorn_user_id;
+        if (atsId != null) map.set(atsId, row);
+      }
+      return map;
+    } catch {
+      // Columns may not exist yet — fall back to user_id + ats_source
+      const configs = await this.getUserConfigs(false);
+      const map = new Map<number, UserConfig>();
+      for (const config of configs) {
+        if (config.ats_source === atsSystem || (atsSystem === 'symplr' && !config.ats_source)) {
+          map.set(config.user_id, config);
+        }
+      }
+      return map;
     }
-    return map;
   }
 
   // REGIONS
@@ -780,6 +834,15 @@ class DatabaseService {
     const result = await pool.request()
       .input('userId', sql.Int, userId)
       .query(`SELECT email FROM dbo.users WHERE userid = @userId`);
+    return result.recordset[0]?.email || null;
+  }
+
+  async getUserEmailFromBullhorn(userId: number): Promise<string | null> {
+    if (!this.bullhornConnectionString) return null;
+    const pool = await this.getBullhornPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`SELECT email FROM dbo.CorporateUser WHERE userID = @userId`);
     return result.recordset[0]?.email || null;
   }
 

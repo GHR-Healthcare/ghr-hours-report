@@ -66,18 +66,22 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
             try {
               const user = await clearConnectService.getUser(userIdStr);
               const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${userId}`;
-              
-              await databaseService.createRecruiter({
+              const email = await databaseService.getUserEmailFromCtmsync(userId);
+
+              await databaseService.createUserConfig({
                 user_id: userId,
                 user_name: userName,
-                division_id: 1, // Default to first division
-                weekly_goal: 0,
-                display_order: 99
+                email: email || undefined,
+                division_id: 1,
+                symplr_user_id: userId,
+                on_hours_report: true,
+                on_stack_ranking: false,
+                display_order: 99,
               });
-              
+
               existingSymplrIds.add(userId);
               newRecruiters.push(userName);
-              console.log(`Auto-added recruiter: ${userName} (ID: ${userId})`);
+              console.log(`Auto-added recruiter: ${userName} (ID: ${userId}, email: ${email})`);
             } catch (addError) {
               console.error(`Error adding recruiter ${userId}:`, addError);
             }

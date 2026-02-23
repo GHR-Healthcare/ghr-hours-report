@@ -145,6 +145,7 @@ export interface UserConfig {
   role: RecruiterRole;
   title: string | null;
   ats_source: string | null;
+  email: string | null;
   symplr_user_id: number | null;
   bullhorn_user_id: number | null;
   weekly_goal: number;
@@ -162,6 +163,7 @@ export interface CreateUserConfigRequest {
   division_id: number;
   role?: RecruiterRole;
   title?: string;
+  email?: string;
   ats_source?: string;
   symplr_user_id?: number;
   bullhorn_user_id?: number;
@@ -177,6 +179,7 @@ export interface UpdateUserConfigRequest {
   division_id?: number;
   role?: RecruiterRole;
   title?: string;
+  email?: string | null;
   symplr_user_id?: number | null;
   bullhorn_user_id?: number | null;
   weekly_goal?: number;

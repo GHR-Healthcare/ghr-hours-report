@@ -113,18 +113,22 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
           if (!exists) {
             try {
               const userName = await databaseService.getUserNameFromCtmsync(userId);
+              const email = await databaseService.getUserEmailFromCtmsync(userId);
 
-              await databaseService.createRecruiter({
+              await databaseService.createUserConfig({
                 user_id: userId,
                 user_name: userName || `User ${userId}`,
+                email: email || undefined,
                 division_id: 1,
-                weekly_goal: 0,
-                display_order: 99
+                symplr_user_id: userId,
+                on_hours_report: true,
+                on_stack_ranking: false,
+                display_order: 99,
               });
 
               activeUserIds.add(userId);
               knownSymplrIds.add(userId);
-              context.log(`Auto-added recruiter: ${userName} (Symplr ID: ${userId})`);
+              context.log(`Auto-added recruiter: ${userName} (Symplr ID: ${userId}, email: ${email})`);
             } catch (addError) {
               context.log(`Error adding recruiter ${userId}: ${addError}`);
             }

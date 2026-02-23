@@ -330,21 +330,25 @@ app.http('calculateWeekly', {
             if (!exists) {
               try {
                 const userName = await databaseService.getUserNameFromCtmsync(userId);
+                const email = await databaseService.getUserEmailFromCtmsync(userId);
                 const name = userName || `User ${userId}`;
 
-                await databaseService.createRecruiter({
+                await databaseService.createUserConfig({
                   user_id: userId,
                   user_name: name,
+                  email: email || undefined,
                   division_id: 1,
-                  weekly_goal: 0,
-                  display_order: 99
+                  symplr_user_id: userId,
+                  on_hours_report: true,
+                  on_stack_ranking: false,
+                  display_order: 99,
                 });
 
                 activeUserIds.add(userId);
                 knownSymplrIds.add(userId);
                 recruiterNames.set(userId, name);
                 newRecruiters.push({ userId, name });
-                context.log(`Auto-added recruiter: ${name} (Symplr ID: ${userId})`);
+                context.log(`Auto-added recruiter: ${name} (Symplr ID: ${userId}, email: ${email})`);
               } catch (addError) {
                 context.log(`Error adding recruiter ${userId}: ${addError}`);
               }
@@ -643,7 +647,6 @@ app.http('adminPortal', {
       <div class="sub-panel active" id="hr-recalc">
         <div class="card">
           <h3>Recalculate</h3>
-          <p style="color: #6b7280; margin-bottom: 1rem;">Re-fetch hours from orders for last week, this week, and next week.</p>
           <button class="btn btn-primary" onclick="runCalculation()" id="calc-btn">Run Weekly Calculation</button>
           <div id="calc-results" style="margin-top: 1rem;"></div>
         </div>
@@ -665,7 +668,6 @@ app.http('adminPortal', {
             <button class="btn btn-primary" onclick="sendLiveEmail('monday')" style="background: #7c3aed;">Send Monday Recap to All</button>
           </div>
           <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
-          <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
             <input type="email" id="test-email-recipient" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
             <div class="email-options" style="margin:0;">
@@ -685,7 +687,6 @@ app.http('adminPortal', {
     <!-- Stack Ranking Panel -->
     <div class="panel" id="stack-ranking-panel">
       <h2>Stack Ranking</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem;">Data is typically ~2 weeks behind (Sun-Sat billing cycle).</p>
       <div class="sub-tabs">
         <button class="sub-tab active" data-subtab="sr-recalc" data-group="sr">Recalculate</button>
         <button class="sub-tab" data-subtab="sr-preview" data-group="sr">Preview</button>
@@ -727,7 +728,6 @@ app.http('adminPortal', {
             <button class="btn btn-primary" onclick="sendStackRankingEmail()">Send to All Recipients</button>
           </div>
           <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
-          <p style="color: #6b7280; margin-bottom: 0.5rem;">Test email to a single address:</p>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
             <input type="email" id="sr-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
             <button class="btn btn-secondary" onclick="sendStackRankingTestEmail()" id="sr-send-test-btn">Send Test</button>
@@ -739,7 +739,6 @@ app.http('adminPortal', {
     <!-- Financials Panel -->
     <div class="panel" id="financials-panel">
       <h2>Financials</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem;">View pay/bill data by user. Uses the same placement data as stack ranking.</p>
 
       <div class="card">
         <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
@@ -766,6 +765,7 @@ app.http('adminPortal', {
         <thead>
           <tr>
             <th>Name</th>
+            <th>Email</th>
             <th>Symplr ID</th>
             <th>Bullhorn ID</th>
             <th>Title</th>
@@ -786,7 +786,6 @@ app.http('adminPortal', {
     <!-- Settings Panel -->
     <div class="panel" id="settings-panel">
       <h2>App Settings</h2>
-      <p style="color: #6b7280; margin-bottom: 1rem;">Manage application configuration. Values here override environment variables. Deleting a value reverts to the environment variable default.</p>
 
       <table>
         <thead>
@@ -828,7 +827,6 @@ app.http('adminPortal', {
           <h3 style="margin:0;">Divisions</h3>
           <button class="btn btn-secondary" onclick="syncDivisions()" style="font-size:0.8rem;">Sync from ATS</button>
         </div>
-        <p style="color:#6b7280;font-size:0.875rem;margin-bottom:0.75rem;">Divisions are synced from Bullhorn departments + Symplr (Education, Non-Acute Nursing). ATS mapping controls which system each division queries for placement data.</p>
         <table>
           <thead><tr><th>Division</th><th>ATS System</th><th>Actions</th></tr></thead>
           <tbody id="ats-mapping-table"></tbody>
@@ -849,6 +847,10 @@ app.http('adminPortal', {
         <div class="form-group">
           <label>Name</label>
           <input type="text" id="edit-name" required>
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="edit-email" placeholder="user@example.com">
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -1355,14 +1357,14 @@ app.http('adminPortal', {
         renderUsers();
       } catch (err) {
         document.getElementById('users-table').innerHTML =
-          '<tr><td colspan="11" class="alert alert-error">Error loading users: ' + err.message + '</td></tr>';
+          '<tr><td colspan="12" class="alert alert-error">Error loading users: ' + err.message + '</td></tr>';
       }
     }
 
     function renderUsers() {
       var tbody = document.getElementById('users-table');
       if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="11" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
         return;
       }
 
@@ -1382,6 +1384,7 @@ app.http('adminPortal', {
 
         html += '<tr>' +
           '<td><strong>' + u.user_name + '</strong></td>' +
+          '<td style="color:#6b7280;font-size:0.85rem;">' + (u.email || '-') + '</td>' +
           '<td>' + (u.symplr_user_id || '-') + '</td>' +
           '<td>' + (u.bullhorn_user_id || '-') + '</td>' +
           '<td style="color:#6b7280;font-size:0.85rem;">' + (u.title || '-') + '</td>' +
@@ -1424,6 +1427,7 @@ app.http('adminPortal', {
       document.getElementById('modal-title').textContent = 'Edit User';
       document.getElementById('edit-config-id').value = u.config_id;
       document.getElementById('edit-name').value = u.user_name;
+      document.getElementById('edit-email').value = u.email || '';
       document.getElementById('edit-symplr-id').value = u.symplr_user_id || '';
       document.getElementById('edit-bullhorn-id').value = u.bullhorn_user_id || '';
       document.getElementById('edit-title').value = u.title || '';
@@ -1452,6 +1456,7 @@ app.http('adminPortal', {
       }
       var data = {
         user_name: document.getElementById('edit-name').value,
+        email: document.getElementById('edit-email').value || null,
         user_id: parseInt(symplrVal || bullhornVal),
         symplr_user_id: symplrVal ? parseInt(symplrVal) : null,
         bullhorn_user_id: bullhornVal ? parseInt(bullhornVal) : null,
@@ -1789,15 +1794,19 @@ app.http('discoverRecruiters', {
         }
         
         try {
-          const newRecruiter = await databaseService.createRecruiter({
+          const email = await databaseService.getUserEmailFromCtmsync(numericUserId);
+          const newRecruiter = await databaseService.createUserConfig({
             user_id: numericUserId,
             user_name: info.name,
+            email: email || undefined,
             division_id: 1,
-            weekly_goal: 0,
-            display_order: 99
+            symplr_user_id: numericUserId,
+            on_hours_report: true,
+            on_stack_ranking: false,
+            display_order: 99,
           });
           added.push({ ...newRecruiter, orderCount: info.orderCount });
-          context.log(`Added recruiter: ${info.name}`);
+          context.log(`Added recruiter: ${info.name} (email: ${email})`);
         } catch (err) {
           context.log(`Error adding recruiter ${info.name}: ${err}`);
           skipped.push({ userId: numericUserId, name: info.name, reason: String(err) });
