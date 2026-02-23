@@ -355,27 +355,54 @@ class DatabaseService {
 
     const atsIdChanged = data.symplr_user_id !== undefined || data.bullhorn_user_id !== undefined;
 
-    const result = await request.query(`
-      UPDATE dbo.user_config
-      SET ${updates.join(', ')}
-      OUTPUT INSERTED.*
-      WHERE config_id = @configId
-    `);
+    let result;
+    try {
+      result = await request.query(`
+        UPDATE dbo.user_config
+        SET ${updates.join(', ')}
+        OUTPUT INSERTED.*
+        WHERE config_id = @configId
+      `);
+    } catch {
+      // email/ATS ID columns may not exist yet — retry without them
+      const safeUpdates: string[] = [];
+      const safeRequest = pool.request().input('configId', sql.Int, data.config_id);
+      if (data.user_name !== undefined) { safeUpdates.push('user_name = @userName'); safeRequest.input('userName', sql.NVarChar(200), data.user_name); }
+      if (data.division_id !== undefined) { safeUpdates.push('division_id = @divisionId'); safeRequest.input('divisionId', sql.Int, data.division_id); }
+      if (data.role !== undefined) { safeUpdates.push('role = @role'); safeRequest.input('role', sql.VarChar(50), data.role); }
+      if (data.title !== undefined) { safeUpdates.push('title = @title'); safeRequest.input('title', sql.NVarChar(200), data.title); }
+      if (data.weekly_goal !== undefined) { safeUpdates.push('weekly_goal = @weeklyGoal'); safeRequest.input('weeklyGoal', sql.Int, data.weekly_goal); }
+      if (data.on_hours_report !== undefined) { safeUpdates.push('on_hours_report = @onHoursReport'); safeRequest.input('onHoursReport', sql.Bit, data.on_hours_report); }
+      if (data.on_stack_ranking !== undefined) { safeUpdates.push('on_stack_ranking = @onStackRanking'); safeRequest.input('onStackRanking', sql.Bit, data.on_stack_ranking); }
+      if (data.is_active !== undefined) { safeUpdates.push('is_active = @isActive'); safeRequest.input('isActive', sql.Bit, data.is_active); }
+      if (data.display_order !== undefined) { safeUpdates.push('display_order = @displayOrder'); safeRequest.input('displayOrder', sql.Int, data.display_order); }
+      if (safeUpdates.length === 0) return null;
+      safeUpdates.push('modified_at = GETDATE()');
+      result = await safeRequest.query(`
+        UPDATE dbo.user_config
+        SET ${safeUpdates.join(', ')}
+        OUTPUT INSERTED.*
+        WHERE config_id = @configId
+      `);
+    }
 
     // Recalculate canonical user_id when ATS IDs change
     if (atsIdChanged && result.recordset[0]) {
-      await pool.request()
-        .input('configId', sql.Int, data.config_id)
-        .query(`
-          UPDATE dbo.user_config
-          SET user_id = COALESCE(symplr_user_id, bullhorn_user_id, user_id)
-          WHERE config_id = @configId
-        `);
-      // Re-fetch the updated row
-      const refreshed = await pool.request()
-        .input('configId', sql.Int, data.config_id)
-        .query('SELECT * FROM dbo.user_config WHERE config_id = @configId');
-      return refreshed.recordset[0] || null;
+      try {
+        await pool.request()
+          .input('configId', sql.Int, data.config_id)
+          .query(`
+            UPDATE dbo.user_config
+            SET user_id = COALESCE(symplr_user_id, bullhorn_user_id, user_id)
+            WHERE config_id = @configId
+          `);
+        const refreshed = await pool.request()
+          .input('configId', sql.Int, data.config_id)
+          .query('SELECT * FROM dbo.user_config WHERE config_id = @configId');
+        return refreshed.recordset[0] || null;
+      } catch {
+        // ATS columns may not exist — return what we have
+      }
     }
 
     return result.recordset[0] || null;
@@ -830,20 +857,28 @@ class DatabaseService {
   }
 
   async getUserEmailFromCtmsync(userId: number): Promise<string | null> {
-    const pool = await this.getCtmsyncPool();
-    const result = await pool.request()
-      .input('userId', sql.Int, userId)
-      .query(`SELECT email FROM dbo.users WHERE userid = @userId`);
-    return result.recordset[0]?.email || null;
+    try {
+      const pool = await this.getCtmsyncPool();
+      const result = await pool.request()
+        .input('userId', sql.Int, userId)
+        .query(`SELECT email FROM dbo.users WHERE userid = @userId`);
+      return result.recordset[0]?.email || null;
+    } catch {
+      return null;
+    }
   }
 
   async getUserEmailFromBullhorn(userId: number): Promise<string | null> {
     if (!this.bullhornConnectionString) return null;
-    const pool = await this.getBullhornPool();
-    const result = await pool.request()
-      .input('userId', sql.Int, userId)
-      .query(`SELECT email FROM dbo.CorporateUser WHERE userID = @userId`);
-    return result.recordset[0]?.email || null;
+    try {
+      const pool = await this.getBullhornPool();
+      const result = await pool.request()
+        .input('userId', sql.Int, userId)
+        .query(`SELECT email FROM dbo.CorporateUser WHERE corporateUserID = @userId`);
+      return result.recordset[0]?.email || null;
+    } catch {
+      return null;
+    }
   }
 
   // Get user title from Bullhorn CorporateUser table
@@ -852,7 +887,7 @@ class DatabaseService {
     const pool = await this.getBullhornPool();
     const result = await pool.request()
       .input('userId', sql.Int, userId)
-      .query(`SELECT occupation FROM dbo.CorporateUser WHERE userID = @userId`);
+      .query(`SELECT occupation FROM dbo.CorporateUser WHERE corporateUserID = @userId`);
     return result.recordset[0]?.occupation || null;
   }
 
@@ -866,7 +901,7 @@ class DatabaseService {
         SELECT cd.name AS department_name
         FROM dbo.CorporateUser cu
         INNER JOIN dbo.CorporationDepartment cd ON cu.primaryDepartmentID = cd.corporationDepartmentID
-        WHERE cu.userID = @userId AND cd.isDeleted = 0
+        WHERE cu.corporateUserID = @userId AND cd.isDeleted = 0
       `);
     return result.recordset[0]?.department_name || null;
   }
@@ -1131,7 +1166,7 @@ class DatabaseService {
           SUM(ISNULL(pd.clientBillRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_bill_amount,
           SUM(ISNULL(pd.payRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_pay_amount
         FROM PlacementDays pd
-        INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.userID
+        INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.corporateUserID
         WHERE pd.weekdays > 0
         GROUP BY pd.ownerID, cu.firstName, cu.lastName
       `);
