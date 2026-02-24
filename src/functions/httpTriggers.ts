@@ -1387,15 +1387,15 @@ app.http('adminPortal', {
         '<col style="width:12%"><col style="width:8%">' +
         '</colgroup>';
       html += '<thead><tr><th>#</th>' +
-        '<th style="' + hdrStyle + '" onclick="sortFinancials(\'recruiter_name\')">Name' + arrow('recruiter_name') + '</th>' +
-        '<th style="' + hdrStyle + '" onclick="sortFinancials(\'division_name\')">Division' + arrow('division_name') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'head_count\')">HC' + arrow('head_count') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'total_bill\')">Total Bill' + arrow('total_bill') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'total_pay\')">Total Pay' + arrow('total_pay') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'taxable_pay\')">Taxable' + arrow('taxable_pay') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'non_taxable_pay\')">Non-Tax' + arrow('non_taxable_pay') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'gross_margin_dollars\')">GM$' + arrow('gross_margin_dollars') + '</th>' +
-        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'gross_profit_pct\')">GP%' + arrow('gross_profit_pct') + '</th></tr></thead><tbody>';
+        '<th style="' + hdrStyle + '" onclick="sortFinancials(\\'recruiter_name\\')">Name' + arrow('recruiter_name') + '</th>' +
+        '<th style="' + hdrStyle + '" onclick="sortFinancials(\\'division_name\\')">Division' + arrow('division_name') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'head_count\\')">HC' + arrow('head_count') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_bill\\')">Total Bill' + arrow('total_bill') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_pay\\')">Total Pay' + arrow('total_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'taxable_pay\\')">Taxable' + arrow('taxable_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'non_taxable_pay\\')">Non-Tax' + arrow('non_taxable_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'gross_margin_dollars\\')">GM$' + arrow('gross_margin_dollars') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'gross_profit_pct\\')">GP%' + arrow('gross_profit_pct') + '</th></tr></thead><tbody>';
 
       rows.forEach(function(r, i) {
         html += '<tr><td>' + (i + 1) + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
