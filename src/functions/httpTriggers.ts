@@ -1,4 +1,6 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import * as fs from 'fs';
+import * as path from 'path';
 import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
 import { clearConnectService } from '../services/clearconnect';
@@ -283,14 +285,11 @@ app.http('calculateWeekly', {
       context.log(`Next week: ${formatDate(nextWeekSunday)} to ${formatDate(nextWeekSaturday)}`);
       context.log(`Snapshot day of week: ${snapshotDayOfWeek} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek]})`);
       
-      // Get active user configs and build Symplr ID set
+      // Get active hours report users from user_config (populated by nightly user sync)
       const activeConfigs = await databaseService.getUserConfigs(false);
       const activeHoursConfigs = activeConfigs.filter(c => c.on_hours_report);
       const activeUserIds = new Set(activeHoursConfigs.map(r => r.user_id));
       const recruiterNames = new Map(activeHoursConfigs.map(r => [r.user_id, r.user_name]));
-      const knownSymplrIds = new Set(
-        activeConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
-      );
       context.log(`Found ${activeHoursConfigs.length} active hours report users`);
       
       const results: any = {
@@ -298,7 +297,6 @@ app.http('calculateWeekly', {
         thisWeek: { weekStart: formatDate(thisWeekSunday), weekEnd: formatDate(thisWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] },
         nextWeek: { weekStart: formatDate(nextWeekSunday), weekEnd: formatDate(nextWeekSaturday), totalOrders: 0, totalHours: 0, recruiters: [] as any[] }
       };
-      const newRecruiters: any[] = [];
       const allRegionNames = new Set<string>();
       
       // Process all three weeks
@@ -322,41 +320,8 @@ app.http('calculateWeekly', {
 
         context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
         results[weekName].totalOrders = orderCount;
-        
-        // Check for new recruiters and auto-add them (check symplr_user_id)
-        for (const [userId] of hoursByRecruiter) {
-          if (!knownSymplrIds.has(userId)) {
-            const exists = await databaseService.userConfigExistsByAtsId('symplr', userId);
-            if (!exists) {
-              try {
-                const userName = await databaseService.getUserNameFromCtmsync(userId);
-                const email = await databaseService.getUserEmailFromCtmsync(userId);
-                const name = userName || `User ${userId}`;
 
-                await databaseService.createUserConfig({
-                  user_id: userId,
-                  user_name: name,
-                  email: email || undefined,
-                  division_id: 1,
-                  symplr_user_id: userId,
-                  on_hours_report: true,
-                  on_stack_ranking: false,
-                  display_order: 99,
-                });
-
-                activeUserIds.add(userId);
-                knownSymplrIds.add(userId);
-                recruiterNames.set(userId, name);
-                newRecruiters.push({ userId, name });
-                context.log(`Auto-added recruiter: ${name} (Symplr ID: ${userId}, email: ${email})`);
-              } catch (addError) {
-                context.log(`Error adding recruiter ${userId}: ${addError}`);
-              }
-            }
-          }
-        }
-        
-        // Round and save snapshots - ONLY for active recruiters
+        // Round and save snapshots - ONLY for active hours report users
         let totalHoursForWeek = 0;
         const recruiterDetails: any[] = [];
 
@@ -395,7 +360,6 @@ app.http('calculateWeekly', {
           snapshotDayOfWeek,
           snapshotDayName: ['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotDayOfWeek],
           regionsWithFilledOrders: [...allRegionNames].sort(),
-          newRecruitersAdded: newRecruiters,
           results
         } 
       };
@@ -2295,5 +2259,26 @@ app.http('healthCheck', {
         timestamp: new Date().toISOString()
       }
     };
+  }
+});
+
+app.http('favicon', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'favicon.ico',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const faviconPath = path.resolve(__dirname, '..', '..', '..', 'favicon.ico');
+      const buffer = fs.readFileSync(faviconPath);
+      return {
+        body: buffer,
+        headers: {
+          'Content-Type': 'image/x-icon',
+          'Cache-Control': 'public, max-age=604800',
+        },
+      };
+    } catch {
+      return { status: 404 };
+    }
   }
 });

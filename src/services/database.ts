@@ -494,6 +494,19 @@ class DatabaseService {
     }
   }
 
+  async findUserConfigByEmail(email: string): Promise<UserConfig | null> {
+    if (!email) return null;
+    const pool = await this.getPool();
+    try {
+      const result = await pool.request()
+        .input('email', sql.NVarChar(200), email.toLowerCase())
+        .query('SELECT * FROM dbo.user_config WHERE LOWER(email) = @email');
+      return result.recordset[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
   async getAtsIdToConfigMap(atsSystem: AtsSystem, includeInactive = false): Promise<Map<number, UserConfig>> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
@@ -1187,54 +1200,56 @@ class DatabaseService {
         });
       }
 
-      // Query placements active during the week
-      // Calculate weekday overlap and multiply by hoursPerDay * rates
+      // Query actual bill/pay from BillableCharge and PayableCharge tables
+      // joined to Placement, filtered by charge date within the week.
+      // Credit both the account manager (customText11) and recruiter (customText12).
       const result = await pool.request()
         .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
         .query(`
-          SET DATEFIRST 7;
-          WITH ActivePlacements AS (
+          WITH PlacementCharges AS (
             SELECT
-              p.ownerID,
+              p.placementID,
+              p.customText11 AS account_manager_id,
+              p.customText12 AS recruiter_id,
               p.candidateID,
-              p.clientBillRate,
-              p.payRate,
-              p.hoursPerDay,
-              -- Calculate overlap start/end with the query week
-              CASE WHEN p.dateBegin > @weekStart THEN CAST(p.dateBegin AS DATE) ELSE @weekStart END AS overlap_start,
-              CASE WHEN ISNULL(p.dateEnd, @weekEnd) < @weekEnd THEN CAST(p.dateEnd AS DATE) ELSE @weekEnd END AS overlap_end
+              ISNULL(bc.bill_subtotal, 0) AS total_bill,
+              ISNULL(pc.pay_subtotal, 0) AS total_pay
             FROM dbo.Placement p
-            WHERE p.dateBegin <= @weekEnd
-              AND ISNULL(p.dateEnd, @weekEnd) >= @weekStart
-              AND p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
+            LEFT JOIN (
+              SELECT placementID, SUM(subtotal) AS bill_subtotal
+              FROM dbo.BillableCharge
+              WHERE CAST(dateAdded AS DATE) BETWEEN @weekStart AND @weekEnd
+              GROUP BY placementID
+            ) bc ON p.placementID = bc.placementID
+            LEFT JOIN (
+              SELECT placementID, SUM(subtotal) AS pay_subtotal
+              FROM dbo.PayableCharge
+              WHERE CAST(dateAdded AS DATE) BETWEEN @weekStart AND @weekEnd
+              GROUP BY placementID
+            ) pc ON p.placementID = pc.placementID
+            WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
+              AND (bc.bill_subtotal IS NOT NULL OR pc.pay_subtotal IS NOT NULL)
           ),
-          PlacementDays AS (
-            SELECT
-              ownerID,
-              candidateID,
-              clientBillRate,
-              payRate,
-              hoursPerDay,
-              -- Count weekdays in the overlap period
-              DATEDIFF(dd, overlap_start, overlap_end) + 1
-              - (DATEDIFF(wk, overlap_start, overlap_end) * 2)
-              - CASE WHEN DATEPART(dw, overlap_start) = 1 THEN 1 ELSE 0 END
-              - CASE WHEN DATEPART(dw, overlap_end) = 7 THEN 1 ELSE 0 END
-              AS weekdays
-            FROM ActivePlacements
-            WHERE overlap_start <= overlap_end
+          CreditedUsers AS (
+            SELECT TRY_CAST(account_manager_id AS INT) AS user_id, candidateID, total_bill, total_pay
+            FROM PlacementCharges
+            WHERE account_manager_id IS NOT NULL AND account_manager_id != ''
+            UNION ALL
+            SELECT TRY_CAST(recruiter_id AS INT) AS user_id, candidateID, total_bill, total_pay
+            FROM PlacementCharges
+            WHERE recruiter_id IS NOT NULL AND recruiter_id != ''
           )
           SELECT
-            pd.ownerID AS recruiter_user_id,
+            cr.user_id AS recruiter_user_id,
             cu.firstName + ' ' + cu.lastName AS recruiter_name,
-            COUNT(DISTINCT pd.candidateID) AS head_count,
-            SUM(ISNULL(pd.clientBillRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_bill_amount,
-            SUM(ISNULL(pd.payRate, 0) * ISNULL(pd.hoursPerDay, 8) * pd.weekdays) AS total_pay_amount
-          FROM PlacementDays pd
-          INNER JOIN dbo.CorporateUser cu ON pd.ownerID = cu.corporateUserID
-          WHERE pd.weekdays > 0
-          GROUP BY pd.ownerID, cu.firstName, cu.lastName
+            COUNT(DISTINCT cr.candidateID) AS head_count,
+            SUM(cr.total_bill) AS total_bill_amount,
+            SUM(cr.total_pay) AS total_pay_amount
+          FROM CreditedUsers cr
+          INNER JOIN dbo.CorporateUser cu ON cr.user_id = cu.corporateUserID
+          WHERE cr.user_id IS NOT NULL
+          GROUP BY cr.user_id, cu.firstName, cu.lastName
         `);
 
       return result.recordset.map((row: any) => {

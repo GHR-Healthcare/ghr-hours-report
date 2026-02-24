@@ -4,7 +4,6 @@ import {
   FinancialRow,
   FinancialTotals,
   PlacementData,
-  RecruiterRole,
   StackRankingRow,
   StackRankingTotals,
   UserConfig,
@@ -12,189 +11,10 @@ import {
 
 class StackRankingService {
   /**
-   * Infer role from a title string.
-   */
-  inferRole(title: string | null): RecruiterRole {
-    if (!title) return 'unknown';
-    const t = title.toLowerCase();
-    if (
-      t.includes('recruiter') ||
-      t.includes('staffing specialist') ||
-      t.includes('talent acquisition') ||
-      t.includes('sourcer')
-    ) {
-      return 'recruiter';
-    }
-    if (
-      t.includes('account manager') ||
-      t.includes('account executive') ||
-      t.includes('sales') ||
-      t.includes('business development') ||
-      t.includes('client manager')
-    ) {
-      return 'account_manager';
-    }
-    return 'unknown';
-  }
-
-  /**
-   * Auto-discover and add new users found in ATS data.
-   * Fetches their title, infers role, and adds to user_config.
-   * Uses ATS-specific ID columns to avoid cross-system ID collisions.
-   */
-  async autoDiscoverUsers(
-    placementData: PlacementData[],
-    atsSystem: AtsSystem,
-    checkedAtsIds: Set<string>,
-  ): Promise<void> {
-    for (const d of placementData) {
-      const key = `${atsSystem}:${d.recruiter_user_id}`;
-      if (checkedAtsIds.has(key)) continue;
-
-      const exists = await databaseService.userConfigExistsByAtsId(atsSystem, d.recruiter_user_id);
-      if (exists) {
-        checkedAtsIds.add(key);
-        continue;
-      }
-
-      try {
-        let title: string | null = null;
-        let email: string | null = null;
-        let divisionId = d.division_id > 0 ? d.division_id : 1;
-
-        if (atsSystem === 'bullhorn') {
-          title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
-          email = await databaseService.getUserEmailFromBullhorn(d.recruiter_user_id);
-          const deptName = await databaseService.getUserDepartmentFromBullhorn(d.recruiter_user_id);
-          console.log(`Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}): dept="${deptName}", title="${title}"`);
-          if (deptName) {
-            // Try exact match first, then partial/contains match
-            let matchedDivId = await databaseService.findDivisionByName(deptName);
-            if (!matchedDivId) {
-              matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
-            }
-            if (matchedDivId) {
-              divisionId = matchedDivId;
-            } else {
-              console.warn(`No division match for Bullhorn dept "${deptName}" — user ${d.recruiter_name} defaulting to division ${divisionId}`);
-            }
-          } else {
-            console.warn(`No department found for Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}) — defaulting to division ${divisionId}`);
-          }
-        } else {
-          title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
-          email = await databaseService.getUserEmailFromCtmsync(d.recruiter_user_id);
-          // Infer Symplr division from email domain
-          if (email && email.toLowerCase().includes('@ghreducation.com')) {
-            const eduDivId = await databaseService.findDivisionByName('Education')
-              || await databaseService.findDivisionByNamePartial('Education');
-            if (eduDivId) divisionId = eduDivId;
-          } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
-            const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
-            if (naDivId) divisionId = naDivId;
-          }
-        }
-
-        const role = this.inferRole(title);
-
-        await databaseService.createUserConfig({
-          user_id: d.recruiter_user_id,
-          user_name: d.recruiter_name || `User ${d.recruiter_user_id}`,
-          division_id: divisionId,
-          role,
-          title: title || undefined,
-          email: email || undefined,
-          ats_source: atsSystem,
-          symplr_user_id: atsSystem === 'symplr' ? d.recruiter_user_id : undefined,
-          bullhorn_user_id: atsSystem === 'bullhorn' ? d.recruiter_user_id : undefined,
-          on_stack_ranking: true,
-          on_hours_report: false,
-        });
-
-        checkedAtsIds.add(key);
-        console.log(`Auto-added ${atsSystem} user to user_config: ${d.recruiter_name} (ID: ${d.recruiter_user_id}, title: ${title}, role: ${role}, division: ${divisionId})`);
-      } catch (err) {
-        console.error(`Error auto-adding ${atsSystem} user ${d.recruiter_user_id}:`, err);
-      }
-    }
-  }
-
-  /**
-   * Refresh division, title, and role for users that haven't been manually configured.
-   * Only touches users with role='unknown' — once a role is set (manually or by this method),
-   * the user is considered configured and won't be overwritten on future runs.
-   */
-  async refreshUserMetadata(): Promise<{ divisions: number; roles: number }> {
-    const allConfigs = await databaseService.getUserConfigs(true);
-    let divisions = 0;
-    let roles = 0;
-
-    for (const config of allConfigs) {
-      if (config.role !== 'unknown') continue; // manually configured — don't touch
-
-      try {
-        const updates: { config_id: number; division_id?: number; title?: string; role?: RecruiterRole } = {
-          config_id: config.config_id,
-        };
-
-        // Refresh title and role
-        let title: string | null = null;
-        if (config.symplr_user_id) {
-          title = await databaseService.getUserTitleFromCtmsync(config.symplr_user_id);
-        } else if (config.bullhorn_user_id) {
-          title = await databaseService.getUserTitleFromBullhorn(config.bullhorn_user_id);
-        }
-        if (title) {
-          const role = this.inferRole(title);
-          updates.title = title;
-          updates.role = role;
-          roles++;
-        }
-
-        // Refresh division for Bullhorn users
-        if (config.bullhorn_user_id) {
-          const deptName = await databaseService.getUserDepartmentFromBullhorn(config.bullhorn_user_id);
-          if (deptName) {
-            let matchedDivId = await databaseService.findDivisionByName(deptName);
-            if (!matchedDivId) {
-              matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
-            }
-            if (matchedDivId) {
-              updates.division_id = matchedDivId;
-              divisions++;
-            }
-          }
-        }
-
-        // Refresh division for Symplr users from email domain
-        if (config.symplr_user_id) {
-          const email = config.email || await databaseService.getUserEmailFromCtmsync(config.symplr_user_id);
-          if (email && email.toLowerCase().includes('@ghreducation.com')) {
-            const eduDivId = await databaseService.findDivisionByName('Education')
-              || await databaseService.findDivisionByNamePartial('Education');
-            if (eduDivId) { updates.division_id = eduDivId; divisions++; }
-          } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
-            const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
-            if (naDivId) { updates.division_id = naDivId; divisions++; }
-          }
-        }
-
-        // Apply if anything changed
-        if (updates.title || updates.role || updates.division_id) {
-          await databaseService.updateUserConfig(updates);
-          console.log(`Refreshed user ${config.user_name}: title="${updates.title}", role=${updates.role}, division=${updates.division_id}`);
-        }
-      } catch (err) {
-        console.warn(`Failed to refresh metadata for user ${config.config_id} (${config.user_name}):`, err);
-      }
-    }
-    return { divisions, roles };
-  }
-
-  /**
    * Calculate stack ranking for a given week.
    * Queries both ATS systems, merges results,
    * computes GM$, GP%, ranks by GM$ descending, and compares to prior week.
+   * Users must already exist in user_config (populated by nightly user sync).
    */
   async calculateRanking(
     weekStart: string,
@@ -213,27 +33,7 @@ class StackRankingService {
 
     console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // 2. Sync divisions from ATS (always — creates static Symplr divisions too),
-    //    then refresh metadata (division, title, role) for unconfigured users
-    try {
-      const newDivs = await databaseService.syncDivisionsFromAts();
-      if (newDivs > 0) console.log(`Synced ${newDivs} new divisions from ATS`);
-      const refreshed = await this.refreshUserMetadata();
-      if (refreshed.divisions > 0 || refreshed.roles > 0) {
-        console.log(`Refreshed user metadata: ${refreshed.divisions} divisions, ${refreshed.roles} roles`);
-      }
-    } catch (err) {
-      console.warn('User data refresh failed, continuing:', err);
-    }
-
-    // 3. Auto-discover new users (check ATS-specific columns)
-    const checkedAtsIds = new Set<string>();
-    await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
-    if (bullhornData.length > 0) {
-      await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
-    }
-
-    // 4. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
+    // 2. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
       databaseService.getAtsIdToConfigMap('symplr'),
       databaseService.getAtsIdToConfigMap('bullhorn'),
@@ -241,7 +41,7 @@ class StackRankingService {
 
     console.log(`Config maps: Symplr has ${symplrIdToConfig.size} entries, Bullhorn has ${bullhornIdToConfig.size} entries`);
 
-    // 4. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
+    // 3. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
     const configAggMap = new Map<number, {
       config: UserConfig;
       head_count: number;
@@ -291,7 +91,7 @@ class StackRankingService {
       bullhornDropped,
     };
 
-    // 7. Compute GM$, GP%, Revenue (only for on_stack_ranking users)
+    // 4. Compute GM$, GP%, Revenue (only for on_stack_ranking users)
     const divisions = await databaseService.getDivisions(false);
     const divisionNameMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
@@ -315,17 +115,17 @@ class StackRankingService {
       });
     }
 
-    // 8. Sort by GM$ descending, assign ranks
+    // 5. Sort by GM$ descending, assign ranks
     unranked.sort((a, b) => b.gross_margin_dollars - a.gross_margin_dollars);
 
-    // 9. Get prior week snapshot for change calculation
+    // 6. Get prior week snapshot for change calculation
     const priorWeekStart = this.getPriorWeekStart(weekStart);
     const priorSnapshot = await databaseService.getPriorWeekSnapshot(priorWeekStart);
     const priorRankMap = new Map(
       priorSnapshot.map(s => [s.recruiter_user_id, s.rank])
     );
 
-    // 10. Build final ranked rows
+    // 7. Build final ranked rows
     const rows: StackRankingRow[] = unranked.map((row, index) => {
       const rank = index + 1;
       const priorRank = priorRankMap.get(row.recruiter_user_id) ?? null;
@@ -339,7 +139,7 @@ class StackRankingService {
       };
     });
 
-    // 11. Compute totals
+    // 8. Compute totals
     const totals: StackRankingTotals = {
       total_head_count: rows.reduce((sum, r) => sum + r.head_count, 0),
       total_gm_dollars: Math.round(rows.reduce((sum, r) => sum + r.gross_margin_dollars, 0) * 100) / 100,
@@ -351,7 +151,7 @@ class StackRankingService {
         ? Math.round((totals.total_gm_dollars / totals.total_revenue) * 100 * 100) / 100
         : 0;
 
-    // 12. Save this week's snapshot
+    // 9. Save this week's snapshot
     await databaseService.saveStackRankingSnapshot(weekStart, rows);
 
     return { rows, totals, _debug };
@@ -360,6 +160,7 @@ class StackRankingService {
   /**
    * Get financial data for all users (no ranking, no on_stack_ranking filter).
    * Returns per-user totals: bill, pay, GM$, GP%.
+   * Users must already exist in user_config (populated by nightly user sync).
    */
   async getFinancialData(
     weekStart: string,
@@ -378,18 +179,6 @@ class StackRankingService {
 
     console.log(`Financials: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // Sync divisions from ATS (always — creates static Symplr divisions too)
-    try {
-      await databaseService.syncDivisionsFromAts();
-    } catch { /* continue with existing divisions */ }
-
-    // Auto-discover new users from ATS data (same as calculateRanking)
-    const checkedAtsIds = new Set<string>();
-    await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
-    if (bullhornData.length > 0) {
-      await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
-    }
-
     // Build ATS-to-config maps — only active users (inactive = hidden from everything)
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
       databaseService.getAtsIdToConfigMap('symplr'),
@@ -397,7 +186,6 @@ class StackRankingService {
     ]);
 
     // Aggregate by config_id — only users with an active config entry appear
-    // Users not in user_config or set to inactive are excluded
     const aggMap = new Map<string, {
       recruiter_user_id: number;
       recruiter_name: string;
@@ -410,7 +198,7 @@ class StackRankingService {
     const aggregateFin = (d: PlacementData, atsSystem: AtsSystem) => {
       const configMap = atsSystem === 'symplr' ? symplrIdToConfig : bullhornIdToConfig;
       const config = configMap.get(d.recruiter_user_id);
-      if (!config) return; // not in user_config or inactive — skip
+      if (!config) return;
 
       const key = `config:${config.config_id}`;
       const existing = aggMap.get(key);

@@ -21,22 +21,21 @@ export function getWeekDates(): {
 } {
   const now = new Date();
   const thisWeekStart = getWeekSunday(now);
-  
+
   const lastWeekStart = new Date(thisWeekStart);
   lastWeekStart.setDate(lastWeekStart.getDate() - 7);
-  
+
   const nextWeekStart = new Date(thisWeekStart);
   nextWeekStart.setDate(nextWeekStart.getDate() + 7);
-  
+
   const nextWeekEnd = new Date(nextWeekStart);
   nextWeekEnd.setDate(nextWeekEnd.getDate() + 6);
 
   return { lastWeekStart, thisWeekStart, nextWeekStart, nextWeekEnd };
 }
 
-export async function calculateAllHours(): Promise<{ processed: number; errors: string[]; newRecruiters: string[] }> {
+export async function calculateAllHours(): Promise<{ processed: number; errors: string[] }> {
   const errors: string[] = [];
-  const newRecruiters: string[] = [];
   let processed = 0;
 
   try {
@@ -49,45 +48,11 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
 
       try {
         console.log(`Processing ${dateStr}...`);
-        
-        const hoursByRecruiter = await clearConnectService.calculateHoursForDate(dateStr, nextDateStr);
 
-        // Get existing user configs to check symplr_user_id for duplicates
-        const existingConfigs = await databaseService.getUserConfigs(true);
-        const existingSymplrIds = new Set(
-          existingConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
-        );
+        const hoursByRecruiter = await clearConnectService.calculateHoursForDate(dateStr, nextDateStr);
 
         for (const [userIdStr, hours] of Object.entries(hoursByRecruiter)) {
           const userId = parseInt(userIdStr);
-
-          // Auto-add recruiter if not in database (check symplr_user_id specifically)
-          if (!existingSymplrIds.has(userId)) {
-            try {
-              const user = await clearConnectService.getUser(userIdStr);
-              const userName = user ? `${user.firstName} ${user.lastName}`.trim() : `User ${userId}`;
-              const email = await databaseService.getUserEmailFromCtmsync(userId);
-
-              await databaseService.createUserConfig({
-                user_id: userId,
-                user_name: userName,
-                email: email || undefined,
-                division_id: 1,
-                symplr_user_id: userId,
-                on_hours_report: true,
-                on_stack_ranking: false,
-                display_order: 99,
-              });
-
-              existingSymplrIds.add(userId);
-              newRecruiters.push(userName);
-              console.log(`Auto-added recruiter: ${userName} (ID: ${userId}, email: ${email})`);
-            } catch (addError) {
-              console.error(`Error adding recruiter ${userId}:`, addError);
-            }
-          }
-          
-          // Save the snapshot
           await databaseService.upsertDailySnapshot(userId, dateStr, hours as number);
         }
 
@@ -107,7 +72,7 @@ export async function calculateAllHours(): Promise<{ processed: number; errors: 
     errors.push(`Fatal error: ${error}`);
   }
 
-  return { processed, errors, newRecruiters };
+  return { processed, errors };
 }
 
 export async function calculateHoursForDate(targetDate: Date): Promise<{ success: boolean; error?: string }> {

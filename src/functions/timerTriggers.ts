@@ -3,6 +3,7 @@ import { databaseService } from '../services/database';
 import { emailService } from '../services/email';
 import { stackRankingService } from '../services/stackRanking';
 import { configService } from '../services/config';
+import { userSyncService } from '../services/userSync';
 
 // Helper function to get week boundaries
 function getWeekInfo(forDate?: Date) {
@@ -59,13 +60,10 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   
   context.log(`Calculating weekly hours, snapshot slot: ${snapshotSlot} (${['Sun/Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][snapshotSlot]})`);
   
-  // Get active user configs and build set of known Symplr IDs
+  // Get active hours report users from user_config (populated by nightly user sync)
   const activeConfigs = await databaseService.getUserConfigs(false);
   const activeHoursConfigs = activeConfigs.filter(c => c.on_hours_report);
   const activeUserIds = new Set(activeHoursConfigs.map(r => r.user_id));
-  const knownSymplrIds = new Set(
-    activeConfigs.filter(c => c.symplr_user_id != null).map(c => c.symplr_user_id!)
-  );
   context.log(`Found ${activeHoursConfigs.length} active hours report users`);
   
   const thisWeekStart = formatDate(weekInfo.thisWeek.sunday);
@@ -103,41 +101,8 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
     const { hoursMap: hoursByRecruiter, orderCount } = await databaseService.getHoursFromOrders(weekStart, weekEnd);
     
     context.log(`${weekName}: Found ${orderCount} orders for ${hoursByRecruiter.size} staffers`);
-    
-    // Check for new recruiters and auto-add them (only for thisWeek to avoid duplicates)
-    // Uses symplr_user_id to avoid cross-system ID collisions
-    if (weekName === 'thisWeek') {
-      for (const [userId] of hoursByRecruiter) {
-        if (!knownSymplrIds.has(userId)) {
-          const exists = await databaseService.userConfigExistsByAtsId('symplr', userId);
-          if (!exists) {
-            try {
-              const userName = await databaseService.getUserNameFromCtmsync(userId);
-              const email = await databaseService.getUserEmailFromCtmsync(userId);
 
-              await databaseService.createUserConfig({
-                user_id: userId,
-                user_name: userName || `User ${userId}`,
-                email: email || undefined,
-                division_id: 1,
-                symplr_user_id: userId,
-                on_hours_report: true,
-                on_stack_ranking: false,
-                display_order: 99,
-              });
-
-              activeUserIds.add(userId);
-              knownSymplrIds.add(userId);
-              context.log(`Auto-added recruiter: ${userName} (Symplr ID: ${userId}, email: ${email})`);
-            } catch (addError) {
-              context.log(`Error adding recruiter ${userId}: ${addError}`);
-            }
-          }
-        }
-      }
-    }
-    
-    // Collect snapshots for batch save
+    // Collect snapshots for batch save (only for users in user_config)
     for (const [userId, hours] of hoursByRecruiter) {
       if (activeUserIds.has(userId)) {
         snapshotsToSave.push({
@@ -346,29 +311,10 @@ app.timer('nightlyCleanup', {
       const stackDeleted = await databaseService.cleanupOldStackRankingSnapshots();
       context.log(`Stack ranking cleanup: ${stackDeleted} old snapshots removed`);
 
-      // 2. Sync divisions from Bullhorn CorporationDepartment + Symplr static divisions
-      const newDivisions = await databaseService.syncDivisionsFromAts();
-      if (newDivisions > 0) context.log(`Created ${newDivisions} new divisions from ATS`);
-
-      // 3. Sync users from both ATS systems (90-day lookback)
-      // This ensures user_config entries exist with proper divisions
-      // before anyone runs Financials or Stack Ranking during the day
+      // 2. Centralized user sync — discovers new users, refreshes metadata
       context.log('Starting nightly user sync...');
-      const now = new Date();
-      const syncEnd = formatDate(now);
-      const syncStart = new Date(now);
-      syncStart.setDate(syncStart.getDate() - 90);
-      const syncStartStr = formatDate(syncStart);
-
-      const checkedAtsIds = new Set<string>();
-
-      const symplrData = await databaseService.getSymplrPlacementData(syncStartStr, syncEnd);
-      await stackRankingService.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
-
-      const bullhornData = await databaseService.getBullhornPlacementData(syncStartStr, syncEnd);
-      await stackRankingService.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
-
-      context.log(`User sync complete: checked ${symplrData.length} Symplr + ${bullhornData.length} Bullhorn placement records`);
+      const syncStats = await userSyncService.syncAllUsers();
+      context.log(`User sync complete: ${syncStats.newUsers} new, ${syncStats.mergedUsers} merged, ${syncStats.titlesSet} titles, ${syncStats.rolesSet} roles, ${syncStats.divisionsSet} divisions`);
     } catch (error) {
       context.error('Error in nightly cleanup/sync:', error);
       throw error;
