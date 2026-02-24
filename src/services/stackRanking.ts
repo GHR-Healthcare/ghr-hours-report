@@ -60,15 +60,26 @@ class StackRankingService {
       try {
         let title: string | null = null;
         let email: string | null = null;
-        let divisionId = d.division_id || 1;
+        let divisionId = d.division_id > 0 ? d.division_id : 1;
 
         if (atsSystem === 'bullhorn') {
           title = await databaseService.getUserTitleFromBullhorn(d.recruiter_user_id);
           email = await databaseService.getUserEmailFromBullhorn(d.recruiter_user_id);
           const deptName = await databaseService.getUserDepartmentFromBullhorn(d.recruiter_user_id);
+          console.log(`Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}): dept="${deptName}", title="${title}"`);
           if (deptName) {
-            const matchedDivId = await databaseService.findDivisionByName(deptName);
-            if (matchedDivId) divisionId = matchedDivId;
+            // Try exact match first, then partial/contains match
+            let matchedDivId = await databaseService.findDivisionByName(deptName);
+            if (!matchedDivId) {
+              matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
+            }
+            if (matchedDivId) {
+              divisionId = matchedDivId;
+            } else {
+              console.warn(`No division match for Bullhorn dept "${deptName}" — user ${d.recruiter_name} defaulting to division ${divisionId}`);
+            }
+          } else {
+            console.warn(`No department found for Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}) — defaulting to division ${divisionId}`);
           }
         } else {
           title = await databaseService.getUserTitleFromCtmsync(d.recruiter_user_id);
@@ -108,6 +119,38 @@ class StackRankingService {
   }
 
   /**
+   * Re-check divisions for existing Bullhorn users that are on a default division.
+   * Looks up their department from Bullhorn and updates if a match is found.
+   */
+  async refreshBullhornDivisions(): Promise<number> {
+    const bullhornConfigs = await databaseService.getAtsIdToConfigMap('bullhorn', true);
+    const defaultDivId = 1; // Nursing — the default fallback
+    let updated = 0;
+
+    for (const [atsId, config] of bullhornConfigs) {
+      if (config.division_id !== defaultDivId) continue; // already assigned
+
+      try {
+        const deptName = await databaseService.getUserDepartmentFromBullhorn(atsId);
+        if (!deptName) continue;
+
+        let matchedDivId = await databaseService.findDivisionByName(deptName);
+        if (!matchedDivId) {
+          matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
+        }
+        if (matchedDivId && matchedDivId !== defaultDivId) {
+          await databaseService.updateUserConfig({ config_id: config.config_id, division_id: matchedDivId });
+          console.log(`Updated Bullhorn user ${config.user_name} (${atsId}) division from ${defaultDivId} to ${matchedDivId} (dept: ${deptName})`);
+          updated++;
+        }
+      } catch (err) {
+        console.warn(`Failed to refresh division for Bullhorn user ${atsId}:`, err);
+      }
+    }
+    return updated;
+  }
+
+  /**
    * Calculate stack ranking for a given week.
    * Queries both ATS systems, merges results,
    * computes GM$, GP%, ranks by GM$ descending, and compares to prior week.
@@ -129,14 +172,27 @@ class StackRankingService {
 
     console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // 2. Auto-discover new users (check ATS-specific columns)
+    // 2. Sync divisions from ATS so Bullhorn department names exist as divisions,
+    //    then fix any existing users stuck on the default division
+    if (bullhornData.length > 0) {
+      try {
+        const newDivs = await databaseService.syncDivisionsFromAts();
+        if (newDivs > 0) console.log(`Synced ${newDivs} new divisions from ATS`);
+        const fixedDivs = await this.refreshBullhornDivisions();
+        if (fixedDivs > 0) console.log(`Fixed divisions for ${fixedDivs} existing Bullhorn users`);
+      } catch (err) {
+        console.warn('Division sync/refresh failed, continuing with existing divisions:', err);
+      }
+    }
+
+    // 3. Auto-discover new users (check ATS-specific columns)
     const checkedAtsIds = new Set<string>();
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
     if (bullhornData.length > 0) {
       await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
     }
 
-    // 3. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
+    // 4. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
       databaseService.getAtsIdToConfigMap('symplr'),
       databaseService.getAtsIdToConfigMap('bullhorn'),
@@ -280,6 +336,13 @@ class StackRankingService {
     }
 
     console.log(`Financials: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
+
+    // Sync divisions from ATS so Bullhorn department names exist as divisions
+    if (bullhornData.length > 0) {
+      try {
+        await databaseService.syncDivisionsFromAts();
+      } catch { /* continue with existing divisions */ }
+    }
 
     // Auto-discover new users from ATS data (same as calculateRanking)
     const checkedAtsIds = new Set<string>();

@@ -951,12 +951,21 @@ class DatabaseService {
     return result.recordset[0]?.department_name || null;
   }
 
-  // Find a division by name (case-insensitive)
+  // Find a division by name (case-insensitive exact match)
   async findDivisionByName(name: string): Promise<number | null> {
     const pool = await this.getPool();
     const result = await pool.request()
       .input('name', sql.NVarChar(200), name)
       .query(`SELECT division_id FROM dbo.divisions WHERE LOWER(division_name) = LOWER(@name) AND is_active = 1`);
+    return result.recordset[0]?.division_id || null;
+  }
+
+  // Find a division by partial name match (either direction: division contains search or search contains division)
+  async findDivisionByNamePartial(name: string): Promise<number | null> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('name', sql.NVarChar(200), name)
+      .query(`SELECT division_id FROM dbo.divisions WHERE (LOWER(division_name) LIKE '%' + LOWER(@name) + '%' OR LOWER(@name) LIKE '%' + LOWER(division_name) + '%') AND is_active = 1`);
     return result.recordset[0]?.division_id || null;
   }
 

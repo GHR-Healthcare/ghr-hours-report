@@ -1188,20 +1188,32 @@ app.http('adminPortal', {
           debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
         }
         var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' ranked for ' + dates.weekStart + ' to ' + dates.weekEnd + '</p>';
-        html += '<table><thead><tr><th>Rank</th><th>Name</th><th>Division</th><th>HC</th><th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior</th></tr></thead><tbody>';
+        var numStyle = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;padding:0.5rem 0.75rem;';
+        var ctrStyle = 'text-align:center;padding:0.5rem 0.75rem;';
+        var hdrRight = 'text-align:right;';
+        var hdrCenter = 'text-align:center;';
+        html += '<table style="table-layout:fixed;width:100%;"><colgroup>' +
+          '<col style="width:5%"><col style="width:20%"><col style="width:13%">' +
+          '<col style="width:6%"><col style="width:14%"><col style="width:8%">' +
+          '<col style="width:14%"><col style="width:8%"><col style="width:7%">' +
+          '</colgroup>';
+        html += '<thead><tr><th>Rank</th><th>Name</th><th>Division</th>' +
+          '<th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">GM$</th>' +
+          '<th style="' + hdrRight + '">GP%</th><th style="' + hdrRight + '">Revenue</th>' +
+          '<th style="' + hdrCenter + '">Change</th><th style="' + hdrCenter + '">Prior</th></tr></thead><tbody>';
         rows.forEach(function(r) {
           var change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
           var prior = r.prior_week_rank !== null ? r.prior_week_rank : 'NEW';
           html += '<tr><td>' + r.rank + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
-            '<td style="text-align:right">' + r.head_count + '</td><td style="text-align:right">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
-            '<td style="text-align:right">' + fmtPct(r.gross_profit_pct) + '</td><td style="text-align:right">' + fmtMoney(r.revenue) + '</td>' +
-            '<td style="text-align:center">' + change + '</td><td style="text-align:center">' + prior + '</td></tr>';
+            '<td style="' + numStyle + '">' + r.head_count + '</td><td style="' + numStyle + '">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+            '<td style="' + numStyle + '">' + fmtPct(r.gross_profit_pct) + '</td><td style="' + numStyle + '">' + fmtMoney(r.revenue) + '</td>' +
+            '<td style="' + ctrStyle + '">' + change + '</td><td style="' + ctrStyle + '">' + prior + '</td></tr>';
         });
         html += '<tr style="font-weight:bold;background:#f0f0f0;"><td></td><td>TOTALS</td><td></td>' +
-          '<td style="text-align:right">' + (totals.total_head_count || 0) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
-          '<td style="text-align:right">' + fmtPct(totals.overall_gp_pct) + '</td>' +
-          '<td style="text-align:right">' + fmtMoney(totals.total_revenue) + '</td><td></td><td></td></tr>';
+          '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtPct(totals.overall_gp_pct) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(totals.total_revenue) + '</td><td></td><td></td></tr>';
         html += '</tbody></table>';
         results.innerHTML = html;
       } catch (err) {
