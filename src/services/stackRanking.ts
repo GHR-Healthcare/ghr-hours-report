@@ -116,18 +116,25 @@ class StackRankingService {
     weekStart: string,
     weekEnd: string
   ): Promise<{ rows: StackRankingRow[]; totals: StackRankingTotals; _debug?: Record<string, unknown> }> {
-    // 1. Query both ATS systems in parallel
-    const [symplrData, bullhornData] = await Promise.all([
-      databaseService.getSymplrPlacementData(weekStart, weekEnd),
-      databaseService.getBullhornPlacementData(weekStart, weekEnd),
-    ]);
+    // 1. Query both ATS systems — catch Bullhorn errors separately so Symplr still works
+    let bullhornError: string | null = null;
+    const symplrData = await databaseService.getSymplrPlacementData(weekStart, weekEnd);
+    let bullhornData: PlacementData[] = [];
+    try {
+      bullhornData = await databaseService.getBullhornPlacementData(weekStart, weekEnd);
+    } catch (err) {
+      bullhornError = err instanceof Error ? err.message : String(err);
+      console.error('Bullhorn query failed in calculateRanking:', bullhornError);
+    }
 
     console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
     // 2. Auto-discover new users (check ATS-specific columns)
     const checkedAtsIds = new Set<string>();
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
-    await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+    if (bullhornData.length > 0) {
+      await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+    }
 
     // 3. Build ATS-to-config maps for resolving ATS IDs to canonical config_id
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
@@ -174,9 +181,10 @@ class StackRankingService {
       else { bullhornDropped++; console.warn(`Bullhorn user ${d.recruiter_user_id} (${d.recruiter_name}) has no config match`); }
     }
 
-    const _debug = {
+    const _debug: Record<string, unknown> = {
       symplrQueryRows: symplrData.length,
       bullhornQueryRows: bullhornData.length,
+      bullhornError,
       symplrConfigMapSize: symplrIdToConfig.size,
       bullhornConfigMapSize: bullhornIdToConfig.size,
       symplrMatched,
@@ -259,18 +267,25 @@ class StackRankingService {
     weekStart: string,
     weekEnd: string
   ): Promise<{ rows: FinancialRow[]; totals: FinancialTotals; _debug?: Record<string, unknown> }> {
-    // Query both ATS systems in parallel
-    const [symplrData, bullhornData] = await Promise.all([
-      databaseService.getSymplrPlacementData(weekStart, weekEnd),
-      databaseService.getBullhornPlacementData(weekStart, weekEnd),
-    ]);
+    // Query both ATS systems — catch Bullhorn errors separately so Symplr still works
+    let bullhornError: string | null = null;
+    const symplrData = await databaseService.getSymplrPlacementData(weekStart, weekEnd);
+    let bullhornData: PlacementData[] = [];
+    try {
+      bullhornData = await databaseService.getBullhornPlacementData(weekStart, weekEnd);
+    } catch (err) {
+      bullhornError = err instanceof Error ? err.message : String(err);
+      console.error('Bullhorn query failed in getFinancialData:', bullhornError);
+    }
 
     console.log(`Financials: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
     // Auto-discover new users from ATS data (same as calculateRanking)
     const checkedAtsIds = new Set<string>();
     await this.autoDiscoverUsers(symplrData, 'symplr', checkedAtsIds);
-    await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+    if (bullhornData.length > 0) {
+      await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
+    }
 
     // Build ATS-to-config maps — include inactive users since financials shows everyone
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
@@ -321,9 +336,10 @@ class StackRankingService {
 
     console.log(`Financials: Config maps - Symplr: ${symplrIdToConfig.size}, Bullhorn: ${bullhornIdToConfig.size}. Aggregated ${aggMap.size} unique users.`);
 
-    const _debug = {
+    const _debug: Record<string, unknown> = {
       symplrQueryRows: symplrData.length,
       bullhornQueryRows: bullhornData.length,
+      bullhornError,
       symplrConfigMapSize: symplrIdToConfig.size,
       bullhornConfigMapSize: bullhornIdToConfig.size,
       aggregatedUsers: aggMap.size,

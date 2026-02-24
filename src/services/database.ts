@@ -1212,13 +1212,13 @@ class DatabaseService {
         };
       });
     } catch (err) {
-      console.error('Bullhorn placement query failed, returning empty:', err);
+      console.error('Bullhorn placement query failed:', err);
       // Reset the pool so next attempt tries a fresh connection
       if (this.bullhornPool) {
         try { await this.bullhornPool.close(); } catch { /* ignore */ }
         this.bullhornPool = null;
       }
-      return [];
+      throw err;
     }
   }
 

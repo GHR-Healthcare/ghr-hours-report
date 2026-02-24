@@ -1180,9 +1180,13 @@ app.http('adminPortal', {
         var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
         var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
 
-        var debugHtml = debug.symplrQueryRows !== undefined
-          ? '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + ' | Matched: Symplr ' + debug.symplrMatched + ', Bullhorn ' + debug.bullhornMatched + ' | Dropped: Symplr ' + debug.symplrDropped + ', Bullhorn ' + debug.bullhornDropped + '</p>'
-          : '';
+        var debugHtml = '';
+        if (debug.symplrQueryRows !== undefined) {
+          debugHtml = '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + ' | Matched: Symplr ' + debug.symplrMatched + ', Bullhorn ' + debug.bullhornMatched + ' | Dropped: Symplr ' + debug.symplrDropped + ', Bullhorn ' + debug.bullhornDropped + '</p>';
+        }
+        if (debug.bullhornError) {
+          debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
+        }
         var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">' + rows.length + ' ranked for ' + dates.weekStart + ' to ' + dates.weekEnd + '</p>';
         html += '<table><thead><tr><th>Rank</th><th>Name</th><th>Division</th><th>HC</th><th>GM$</th><th>GP%</th><th>Revenue</th><th>Change</th><th>Prior</th></tr></thead><tbody>';
         rows.forEach(function(r) {
@@ -1306,9 +1310,13 @@ app.http('adminPortal', {
           divisions[r.division_name].push(r);
         });
 
-        var debugHtml = debug.symplrQueryRows !== undefined
-          ? '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config maps: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + '</p>'
-          : '';
+        var debugHtml = '';
+        if (debug.symplrQueryRows !== undefined) {
+          debugHtml = '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config maps: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + '</p>';
+        }
+        if (debug.bullhornError) {
+          debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
+        }
         var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
         html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:28%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:10%"></colgroup>';
         html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GM$</th><th style="' + hdrRight + '">GP%</th></tr></thead><tbody>';
