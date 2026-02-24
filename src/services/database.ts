@@ -979,15 +979,19 @@ class DatabaseService {
    * Returns the number of new divisions created.
    */
   async syncDivisionsFromAts(): Promise<number> {
-    // 1. Get all active department names from Bullhorn
+    // 1. Get all active department names from Bullhorn (skip if connection fails)
     const bullhornDepts: string[] = [];
     if (this.bullhornConfig) {
-      const bhPool = await this.getBullhornPool();
-      const result = await bhPool.request().query(
-        `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND isEnabled = 1 AND name IS NOT NULL`
-      );
-      for (const row of result.recordset) {
-        if (row.name && row.name.trim()) bullhornDepts.push(row.name.trim());
+      try {
+        const bhPool = await this.getBullhornPool();
+        const result = await bhPool.request().query(
+          `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND isEnabled = 1 AND name IS NOT NULL`
+        );
+        for (const row of result.recordset) {
+          if (row.name && row.name.trim()) bullhornDepts.push(row.name.trim());
+        }
+      } catch (err) {
+        console.warn('Could not fetch Bullhorn departments for division sync:', err);
       }
     }
 

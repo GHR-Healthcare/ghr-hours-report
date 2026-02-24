@@ -762,25 +762,41 @@ app.http('adminPortal', {
 
       <div class="stats" id="user-stats"></div>
 
-      <table>
+      <div style="overflow-x:auto;">
+      <table style="table-layout:fixed;width:100%;min-width:900px;font-size:0.85rem;">
+        <colgroup>
+          <col style="width:12%">
+          <col style="width:14%">
+          <col style="width:6%">
+          <col style="width:6%">
+          <col style="width:10%">
+          <col style="width:7%">
+          <col style="width:9%">
+          <col style="width:5%">
+          <col style="width:5%">
+          <col style="width:5%">
+          <col style="width:6%">
+          <col style="width:5%">
+        </colgroup>
         <thead>
           <tr>
             <th>Name</th>
             <th>Email</th>
-            <th>Symplr ID</th>
-            <th>Bullhorn ID</th>
+            <th>Symplr</th>
+            <th>Bullhorn</th>
             <th>Title</th>
             <th>Role</th>
             <th>Division</th>
-            <th>Weekly Goal</th>
-            <th>Hours Rpt</th>
-            <th>Stack Rank</th>
+            <th>Goal</th>
+            <th style="text-align:center">Hrs</th>
+            <th style="text-align:center">SR</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody id="users-table"></tbody>
       </table>
+      </div>
     </div>
   </div>
 
@@ -1439,19 +1455,20 @@ app.http('adminPortal', {
         var checkmark = '<span style="color:#059669;">Y</span>';
         var dash = '<span style="color:#9ca3af;">-</span>';
 
+        var ellipsis = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         html += '<tr>' +
-          '<td><strong>' + u.user_name + '</strong></td>' +
-          '<td style="color:#6b7280;font-size:0.85rem;">' + (u.email || '-') + '</td>' +
+          '<td style="' + ellipsis + '"><strong>' + u.user_name + '</strong></td>' +
+          '<td style="color:#6b7280;' + ellipsis + '" title="' + (u.email || '') + '">' + (u.email || '-') + '</td>' +
           '<td>' + (u.symplr_user_id || '-') + '</td>' +
           '<td>' + (u.bullhorn_user_id || '-') + '</td>' +
-          '<td style="color:#6b7280;font-size:0.85rem;">' + (u.title || '-') + '</td>' +
+          '<td style="color:#6b7280;' + ellipsis + '" title="' + (u.title || '') + '">' + (u.title || '-') + '</td>' +
           '<td>' + roleBadge + '</td>' +
-          '<td>' + (divName ? divName.division_name : 'Div ' + u.division_id) + '</td>' +
+          '<td style="' + ellipsis + '">' + (divName ? divName.division_name : 'Div ' + u.division_id) + '</td>' +
           '<td>' + (u.weekly_goal || 0) + '</td>' +
           '<td style="text-align:center">' + (u.on_hours_report ? checkmark : dash) + '</td>' +
           '<td style="text-align:center">' + (u.on_stack_ranking ? checkmark : dash) + '</td>' +
           '<td>' + statusBadge + '</td>' +
-          '<td class="actions"><button class="btn btn-secondary" onclick="editUser(' + u.config_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button></td>' +
+          '<td><button class="btn btn-secondary" onclick="editUser(' + u.config_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button></td>' +
           '</tr>';
       });
       tbody.innerHTML = html;
@@ -2138,7 +2155,8 @@ app.http('syncDivisions', {
       return { jsonBody: { created, divisions } };
     } catch (error) {
       context.error('Error syncing divisions:', error);
-      return { status: 500, jsonBody: { error: 'Failed to sync divisions from ATS' } };
+      const msg = error instanceof Error ? error.message : String(error);
+      return { status: 500, jsonBody: { error: 'Failed to sync divisions from ATS: ' + msg } };
     }
   }
 });
