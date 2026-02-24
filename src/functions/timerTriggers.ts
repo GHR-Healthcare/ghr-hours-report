@@ -314,7 +314,7 @@ app.timer('nightlyCleanup', {
       // 2. Centralized user sync — discovers new users, refreshes metadata
       context.log('Starting nightly user sync...');
       const syncStats = await userSyncService.syncAllUsers();
-      context.log(`User sync complete: ${syncStats.newUsers} new, ${syncStats.mergedUsers} merged, ${syncStats.titlesSet} titles, ${syncStats.rolesSet} roles, ${syncStats.divisionsSet} divisions`);
+      context.log(`User sync complete: ${syncStats.newUsers} new, ${syncStats.mergedUsers} merged, ${syncStats.emailsSet} emails, ${syncStats.titlesSet} titles, ${syncStats.rolesSet} roles, ${syncStats.divisionsSet} divisions`);
     } catch (error) {
       context.error('Error in nightly cleanup/sync:', error);
       throw error;

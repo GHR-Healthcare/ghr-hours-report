@@ -9,6 +9,7 @@ export interface SyncStats {
   newUsers: number;
   mergedUsers: number;
   titlesSet: number;
+  emailsSet: number;
   rolesSet: number;
   divisionsSet: number;
 }
@@ -103,7 +104,7 @@ class UserSyncService {
    * Called from the nightly cleanup timer — single source of truth.
    */
   async syncAllUsers(): Promise<SyncStats> {
-    const stats: SyncStats = { newUsers: 0, mergedUsers: 0, titlesSet: 0, rolesSet: 0, divisionsSet: 0 };
+    const stats: SyncStats = { newUsers: 0, mergedUsers: 0, titlesSet: 0, emailsSet: 0, rolesSet: 0, divisionsSet: 0 };
 
     // 1. Merge duplicate configs (same person in both ATS systems, matched by email)
     await this.mergeExistingDuplicates(stats);
@@ -138,7 +139,7 @@ class UserSyncService {
     // 4. Refresh existing users with unset fields (per-field checks)
     await this.refreshExistingUsers(stats);
 
-    console.log(`User sync complete: ${stats.newUsers} new, ${stats.mergedUsers} merged, ${stats.titlesSet} titles set, ${stats.rolesSet} roles set, ${stats.divisionsSet} divisions set`);
+    console.log(`User sync complete: ${stats.newUsers} new, ${stats.mergedUsers} merged, ${stats.emailsSet} emails set, ${stats.titlesSet} titles set, ${stats.rolesSet} roles set, ${stats.divisionsSet} divisions set`);
     return stats;
   }
 
@@ -293,6 +294,7 @@ class UserSyncService {
 
   /**
    * Refresh existing users with unset fields. Per-field checks:
+   * - email IS NULL → fetch from ATS
    * - title IS NULL → fetch from ATS
    * - role = 'unknown' → infer from title
    * - division = Unassigned → try to detect from ATS/email
@@ -303,16 +305,31 @@ class UserSyncService {
     const unassignedId = await this.getUnassignedDivisionId();
 
     for (const config of allConfigs) {
+      const needsEmail = !config.email;
       const needsTitle = !config.title;
       const needsRole = config.role === 'unknown';
       const needsDivision = config.division_id === unassignedId;
 
-      if (!needsTitle && !needsRole && !needsDivision) continue;
+      if (!needsEmail && !needsTitle && !needsRole && !needsDivision) continue;
 
       try {
-        const updates: { config_id: number; title?: string; role?: RecruiterRole; division_id?: number } = {
+        const updates: { config_id: number; email?: string; title?: string; role?: RecruiterRole; division_id?: number } = {
           config_id: config.config_id,
         };
+
+        // Fetch email if missing
+        let email = config.email;
+        if (needsEmail) {
+          if (config.symplr_user_id) {
+            email = await databaseService.getUserEmailFromCtmsync(config.symplr_user_id);
+          } else if (config.bullhorn_user_id) {
+            email = await databaseService.getUserEmailFromBullhorn(config.bullhorn_user_id);
+          }
+          if (email) {
+            updates.email = email;
+            stats.emailsSet++;
+          }
+        }
 
         // Fetch title if missing
         let title = config.title;
@@ -337,11 +354,11 @@ class UserSyncService {
           }
         }
 
-        // Detect division if Unassigned
+        // Detect division if Unassigned (use freshly fetched email if available)
         if (needsDivision) {
           const atsSystem: AtsSystem = config.bullhorn_user_id ? 'bullhorn' : 'symplr';
           const atsUserId = config.bullhorn_user_id || config.symplr_user_id;
-          const email = config.email || (
+          const divEmail = email || (
             config.symplr_user_id
               ? await databaseService.getUserEmailFromCtmsync(config.symplr_user_id)
               : config.bullhorn_user_id
@@ -350,7 +367,7 @@ class UserSyncService {
           );
 
           if (atsUserId) {
-            const divisionId = await this.detectDivision(atsSystem, atsUserId, email);
+            const divisionId = await this.detectDivision(atsSystem, atsUserId, divEmail);
             if (divisionId !== unassignedId) {
               updates.division_id = divisionId;
               stats.divisionsSet++;
@@ -359,9 +376,9 @@ class UserSyncService {
         }
 
         // Apply if anything changed
-        if (updates.title || updates.role || updates.division_id) {
+        if (updates.email || updates.title || updates.role || updates.division_id) {
           await databaseService.updateUserConfig(updates);
-          console.log(`User sync: refreshed ${config.user_name}: title="${updates.title}", role=${updates.role}, division=${updates.division_id}`);
+          console.log(`User sync: refreshed ${config.user_name}: email="${updates.email}", title="${updates.title}", role=${updates.role}, division=${updates.division_id}`);
         }
       } catch (err) {
         console.warn(`User sync: failed to refresh user ${config.config_id} (${config.user_name}):`, err);

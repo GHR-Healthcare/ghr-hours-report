@@ -1201,8 +1201,8 @@ class DatabaseService {
       }
 
       // Query actual bill/pay from BillableCharge and PayableCharge tables
-      // joined to Placement, filtered by charge date within the week.
-      // Credit both the account manager (customText11) and recruiter (customText12).
+      // Credit assigned via PlacementCommission (role: Sales=AM, Recruiting=Recruiter)
+      // Each person's share = total * commissionPercentage / 100
       const result = await pool.request()
         .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
@@ -1210,8 +1210,6 @@ class DatabaseService {
           WITH PlacementCharges AS (
             SELECT
               p.placementID,
-              p.customText11 AS account_manager_id,
-              p.customText12 AS recruiter_id,
               p.candidateID,
               ISNULL(bc.bill_subtotal, 0) AS total_bill,
               ISNULL(pc.pay_subtotal, 0) AS total_pay
@@ -1230,26 +1228,19 @@ class DatabaseService {
             ) pc ON p.placementID = pc.placementID
             WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
               AND (bc.bill_subtotal IS NOT NULL OR pc.pay_subtotal IS NOT NULL)
-          ),
-          CreditedUsers AS (
-            SELECT TRY_CAST(account_manager_id AS INT) AS user_id, candidateID, total_bill, total_pay
-            FROM PlacementCharges
-            WHERE account_manager_id IS NOT NULL AND account_manager_id != ''
-            UNION ALL
-            SELECT TRY_CAST(recruiter_id AS INT) AS user_id, candidateID, total_bill, total_pay
-            FROM PlacementCharges
-            WHERE recruiter_id IS NOT NULL AND recruiter_id != ''
           )
           SELECT
-            cr.user_id AS recruiter_user_id,
+            pcm.userID AS recruiter_user_id,
             cu.firstName + ' ' + cu.lastName AS recruiter_name,
-            COUNT(DISTINCT cr.candidateID) AS head_count,
-            SUM(cr.total_bill) AS total_bill_amount,
-            SUM(cr.total_pay) AS total_pay_amount
-          FROM CreditedUsers cr
-          INNER JOIN dbo.CorporateUser cu ON cr.user_id = cu.corporateUserID
-          WHERE cr.user_id IS NOT NULL
-          GROUP BY cr.user_id, cu.firstName, cu.lastName
+            COUNT(DISTINCT pch.candidateID) AS head_count,
+            SUM(pch.total_bill * pcm.commissionPercentage / 100.0) AS total_bill_amount,
+            SUM(pch.total_pay * pcm.commissionPercentage / 100.0) AS total_pay_amount
+          FROM PlacementCharges pch
+          INNER JOIN dbo.PlacementCommission pcm
+            ON pch.placementID = pcm.placementID
+            AND ISNULL(pcm.isDeleted, 0) = 0
+          INNER JOIN dbo.CorporateUser cu ON pcm.userID = cu.userID
+          GROUP BY pcm.userID, cu.firstName, cu.lastName
         `);
 
       return result.recordset.map((row: any) => {

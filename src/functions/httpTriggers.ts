@@ -7,6 +7,7 @@ import { clearConnectService } from '../services/clearconnect';
 import { calculateAllHours } from '../utils/hours-calculator';
 import { stackRankingService } from '../services/stackRanking';
 import { configService } from '../services/config';
+import { userSyncService } from '../services/userSync';
 
 // DIVISIONS
 
@@ -721,7 +722,10 @@ app.http('adminPortal', {
     <div class="panel" id="user-admin-panel">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h2>User Admin</h2>
-        <button class="btn btn-primary" onclick="openAddUserModal()">+ Add User</button>
+        <div style="display:flex;gap:0.5rem;">
+          <button class="btn" onclick="syncUsers()" id="syncUsersBtn">Sync Users</button>
+          <button class="btn btn-primary" onclick="openAddUserModal()">+ Add User</button>
+        </div>
       </div>
 
       <div class="stats" id="user-stats"></div>
@@ -1390,6 +1394,30 @@ app.http('adminPortal', {
 
     // =========== USER ADMIN ===========
 
+    async function syncUsers() {
+      var btn = document.getElementById('syncUsersBtn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      try {
+        var res = await fetch(API_BASE + '/user-sync', { method: 'POST' });
+        var data = await res.json();
+        if (data.error) {
+          alert('Sync error: ' + data.error);
+        } else {
+          var msg = 'Sync complete: ' + data.newUsers + ' new, ' + data.mergedUsers + ' merged, ' +
+            data.emailsSet + ' emails, ' + data.titlesSet + ' titles, ' +
+            data.rolesSet + ' roles, ' + data.divisionsSet + ' divisions set';
+          alert(msg);
+          await loadUsers();
+        }
+      } catch (err) {
+        alert('Sync failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync Users';
+      }
+    }
+
     async function loadUsers() {
       try {
         var res = await fetch(API_BASE + '/user-configs?includeInactive=true');
@@ -1943,6 +1971,23 @@ app.http('updateUserConfig', {
     } catch (error) {
       context.error('Error updating user config:', error);
       return { status: 500, jsonBody: { error: 'Failed to update user config' } };
+    }
+  }
+});
+
+app.http('triggerUserSync', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'user-sync',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      context.log('Manual user sync triggered');
+      const stats = await userSyncService.syncAllUsers();
+      context.log(`Manual user sync complete: ${JSON.stringify(stats)}`);
+      return { jsonBody: stats };
+    } catch (error) {
+      context.error('Error in manual user sync:', error);
+      return { status: 500, jsonBody: { error: 'User sync failed: ' + (error instanceof Error ? error.message : String(error)) } };
     }
   }
 });
