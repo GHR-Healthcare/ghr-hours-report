@@ -835,25 +835,19 @@ class DatabaseService {
   async getHoursFromOrders(weekStart: string, weekEnd: string): Promise<{ hoursMap: Map<number, number>, lunchMinutesMap: Map<number, number>, orderCount: number, regionNames: string[] }> {
     const pool = await this.getCtmsyncPool();
 
-    // Get hours and order counts by staffer, with lunch minutes subtracted
-    // Use DefaultLunchMins from client profile instead of lesslunchmin from order
-    // because lesslunchmin is only populated after payment
+    // Uses vw_OrderHours view which pre-computes shift/lunch minutes
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
         SELECT
-          u.userid,
+          userid,
           COUNT(*) AS order_count,
-          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) - ISNULL(pc.defaultlunchmins, 0)) / 60.0 AS total_hours,
-          SUM(ISNULL(pc.defaultlunchmins, 0)) / 60.0 AS lunch_hours
-        FROM dbo.orders o
-        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
-        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
-        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
-        WHERE o.status = 'filled'
-          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
-        GROUP BY u.userid
+          SUM(net_minutes) / 60.0 AS total_hours,
+          SUM(lunch_minutes) / 60.0 AS lunch_hours
+        FROM dbo.vw_OrderHours
+        WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        GROUP BY userid
       `);
 
     const hoursMap = new Map<number, number>();
@@ -865,17 +859,15 @@ class DatabaseService {
       totalOrders += row.order_count || 0;
     }
 
-    // Get distinct region names from filled orders
+    // Get distinct region names from filled orders using vw_OrderHours
     const regionsResult = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
         SELECT DISTINCT r.regionname
-        FROM dbo.orders o
-        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
-        INNER JOIN dbo.regions r ON pt.homeregion = r.regionid
-        WHERE o.status = 'filled'
-          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        FROM dbo.vw_OrderHours oh
+        INNER JOIN dbo.regions r ON oh.homeregion = r.regionid
+        WHERE CAST(oh.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
           AND r.regionname IS NOT NULL
         ORDER BY r.regionname
       `);
@@ -1047,21 +1039,18 @@ class DatabaseService {
       return { sun_mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
     }
     
-    // Query orders grouped by day of week
+    // Uses vw_OrderHours view - query grouped by day of week
     const result = await ctmsyncPool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
-        SELECT 
-          u.userid,
-          DATEPART(weekday, o.shiftstarttime) AS day_of_week,
-          SUM(DATEDIFF(MINUTE, o.shiftstarttime, o.shiftendtime) / 60.0) AS total_hours
-        FROM dbo.orders o
-        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
-        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
-        WHERE o.status = 'filled'
-          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
-        GROUP BY u.userid, DATEPART(weekday, o.shiftstarttime)
+        SELECT
+          userid,
+          day_of_week,
+          SUM(shift_minutes / 60.0) AS total_hours
+        FROM dbo.vw_OrderHours
+        WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+        GROUP BY userid, day_of_week
       `);
     
     // Accumulate hours by day (DATEPART weekday: 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat)
@@ -1145,23 +1134,32 @@ class DatabaseService {
       });
     }
 
-    // Use pre-computed totalbillamount and totalpayamount from orders
-    // These already include all rate tiers (regular, OT, holiday, double time, extras)
+    // Uses vw_FilledOrderFinancials view which pre-computes non-taxable pay
+    // Credits both staffing specialist and recruiter on the temp profile
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
+        WITH CreditedUsers AS (
+          SELECT staffingspecialist AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          FROM dbo.vw_FilledOrderFinancials
+          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+            AND staffingspecialist IS NOT NULL
+          UNION ALL
+          SELECT recruiter AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          FROM dbo.vw_FilledOrderFinancials
+          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+            AND recruiter IS NOT NULL AND recruiter != staffingspecialist
+        )
         SELECT
           u.userid AS recruiter_user_id,
           u.firstname + ' ' + u.lastname AS recruiter_name,
-          COUNT(DISTINCT o.filledby) AS head_count,
-          SUM(ISNULL(o.totalbillamount, 0)) AS total_bill_amount,
-          SUM(ISNULL(o.totalpayamount, 0)) AS total_pay_amount
-        FROM dbo.orders o
-        INNER JOIN dbo.profile_temp pt ON o.filledby = pt.recordid
-        INNER JOIN dbo.users u ON pt.staffingspecialist = u.userid
-        WHERE o.status = 'filled'
-          AND CAST(o.shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+          COUNT(DISTINCT cu.filledby) AS head_count,
+          SUM(cu.total_bill) AS total_bill_amount,
+          SUM(cu.total_pay) AS total_pay_amount,
+          SUM(cu.non_taxable_pay) AS non_taxable_pay
+        FROM CreditedUsers cu
+        INNER JOIN dbo.users u ON cu.credited_user_id = u.userid
         GROUP BY u.userid, u.firstname, u.lastname
       `);
 
@@ -1175,6 +1173,7 @@ class DatabaseService {
         head_count: row.head_count || 0,
         total_bill_amount: row.total_bill_amount || 0,
         total_pay_amount: row.total_pay_amount || 0,
+        non_taxable_pay: row.non_taxable_pay || 0,
       };
     });
   }
@@ -1253,6 +1252,7 @@ class DatabaseService {
           head_count: row.head_count || 0,
           total_bill_amount: row.total_bill_amount || 0,
           total_pay_amount: row.total_pay_amount || 0,
+          non_taxable_pay: 0,
         };
       });
     } catch (err) {

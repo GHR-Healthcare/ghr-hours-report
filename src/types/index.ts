@@ -206,6 +206,7 @@ export interface PlacementData {
   head_count: number;
   total_bill_amount: number;
   total_pay_amount: number;
+  non_taxable_pay: number;
 }
 
 export interface FinancialRow {
@@ -215,6 +216,8 @@ export interface FinancialRow {
   head_count: number;
   total_bill: number;
   total_pay: number;
+  taxable_pay: number;
+  non_taxable_pay: number;
   gross_margin_dollars: number;
   gross_profit_pct: number;
 }
@@ -223,6 +226,8 @@ export interface FinancialTotals {
   total_head_count: number;
   total_bill: number;
   total_pay: number;
+  total_taxable_pay: number;
+  total_non_taxable_pay: number;
   total_gm_dollars: number;
   overall_gp_pct: number;
 }

@@ -403,11 +403,11 @@ class EmailService {
       if (row.rank_change === null) {
         changeDisplay = 'NEW';
       } else if (row.rank_change > 0) {
-        changeDisplay = `+${row.rank_change}`;
+        changeDisplay = `<span style="color:#15803d;">&#9650; ${row.rank_change}</span>`;
       } else if (row.rank_change < 0) {
-        changeDisplay = `${row.rank_change}`;
+        changeDisplay = `<span style="color:#dc2626;">&#9660; ${Math.abs(row.rank_change)}</span>`;
       } else {
-        changeDisplay = '-';
+        changeDisplay = `<span style="color:#6b7280;">&#9644; 0</span>`;
       }
 
       const priorRankDisplay = row.prior_week_rank !== null ? String(row.prior_week_rank) : 'NEW';

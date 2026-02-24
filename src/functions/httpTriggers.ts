@@ -713,6 +713,7 @@ app.http('adminPortal', {
           <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
           <input type="date" id="fin-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
           <button class="btn btn-primary" onclick="loadFinancials()">Load Data</button>
+          <button class="btn" onclick="exportFinancials()" id="exportFinBtn" style="display:none;">Export CSV</button>
         </div>
         <div id="fin-results"></div>
       </div>
@@ -796,6 +797,8 @@ app.http('adminPortal', {
               <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
               <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL</option>
               <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL</option>
+              <option value="SYMPLR_BURDEN">SYMPLR_BURDEN</option>
+              <option value="BULLHORN_BURDEN">BULLHORN_BURDEN</option>
             </select>
           </div>
           <div>
@@ -1219,7 +1222,7 @@ app.http('adminPortal', {
           '<th style="' + hdrRight + '">GP%</th><th style="' + hdrRight + '">Revenue</th>' +
           '<th style="' + hdrCenter + '">Change</th><th style="' + hdrCenter + '">Prior</th></tr></thead><tbody>';
         rows.forEach(function(r) {
-          var change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '+' + r.rank_change : r.rank_change === 0 ? '-' : '' + r.rank_change;
+          var change = r.rank_change === null ? 'NEW' : r.rank_change > 0 ? '<span style="color:#15803d;">&#9650; ' + r.rank_change + '</span>' : r.rank_change === 0 ? '<span style="color:#6b7280;">&#9644; 0</span>' : '<span style="color:#dc2626;">&#9660; ' + Math.abs(r.rank_change) + '</span>';
           var prior = r.prior_week_rank !== null ? r.prior_week_rank : 'NEW';
           html += '<tr><td>' + r.rank + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
             '<td style="' + numStyle + '">' + r.head_count + '</td><td style="' + numStyle + '">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
@@ -1309,6 +1312,9 @@ app.http('adminPortal', {
       return { weekStart: weekStart, weekEnd: weekEnd };
     }
 
+    var finData = { rows: [], totals: {}, debug: {}, dates: {} };
+    var finSort = { col: 'gross_margin_dollars', dir: 'desc' };
+
     async function loadFinancials() {
       var dates = getFinancialsDates();
       var results = document.getElementById('fin-results');
@@ -1319,77 +1325,146 @@ app.http('adminPortal', {
         var data = await res.json();
         if (data.error) { results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>'; return; }
 
-        var rows = data.rows || [];
-        var totals = data.totals || {};
-        var debug = data._debug || {};
-        var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
-        var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
-
-        var numStyle = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;';
-        var hdrRight = 'text-align:right;';
-
-        // Group rows by division
-        var divisions = {};
-        var divisionOrder = [];
-        rows.forEach(function(r) {
-          if (!divisions[r.division_name]) {
-            divisions[r.division_name] = [];
-            divisionOrder.push(r.division_name);
-          }
-          divisions[r.division_name].push(r);
-        });
-
-        var debugHtml = '';
-        if (debug.symplrQueryRows !== undefined) {
-          debugHtml = '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config maps: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + '</p>';
-        }
-        if (debug.bullhornError) {
-          debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
-        }
-        var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users across ' + divisionOrder.length + ' divisions</p>';
-        html += '<table style="table-layout:fixed;width:100%;"><colgroup><col style="width:28%"><col style="width:8%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:10%"></colgroup>';
-        html += '<thead><tr><th>Name</th><th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">Total Bill</th><th style="' + hdrRight + '">Total Pay</th><th style="' + hdrRight + '">GM$</th><th style="' + hdrRight + '">GP%</th></tr></thead><tbody>';
-
-        divisionOrder.forEach(function(divName) {
-          var divRows = divisions[divName];
-          // Division header
-          html += '<tr style="background:#e5e7eb;"><td colspan="6" style="font-weight:bold;padding:0.5rem 0.75rem;">' + divName + '</td></tr>';
-          // Division rows
-          var divHC = 0, divBill = 0, divPay = 0;
-          divRows.forEach(function(r) {
-            divHC += r.head_count;
-            divBill += r.total_bill;
-            divPay += r.total_pay;
-            html += '<tr><td style="padding-left:1.5rem;">' + r.recruiter_name + '</td>' +
-              '<td style="' + numStyle + '">' + r.head_count + '</td>' +
-              '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
-              '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
-              '<td style="' + numStyle + '">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
-              '<td style="' + numStyle + '">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
-          });
-          // Division subtotals
-          var divGP = divBill - divPay;
-          var divGM = divBill > 0 ? (divGP / divBill) * 100 : 0;
-          html += '<tr style="font-weight:600;background:#f3f4f6;"><td style="padding-left:1.5rem;">' + divName + ' Subtotal</td>' +
-            '<td style="' + numStyle + '">' + divHC + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(divBill) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(divPay) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtMoney(divGP) + '</td>' +
-            '<td style="' + numStyle + '">' + fmtPct(divGM) + '</td></tr>';
-        });
-
-        // Grand totals
-        html += '<tr style="font-weight:bold;background:#dbeafe;border-top:2px solid #93c5fd;"><td>GRAND TOTAL</td>' +
-          '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
-          '<td style="' + numStyle + '">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
-        html += '</tbody></table>';
-        results.innerHTML = html;
+        finData.rows = data.rows || [];
+        finData.totals = data.totals || {};
+        finData.debug = data._debug || {};
+        finData.dates = dates;
+        finSort = { col: 'gross_margin_dollars', dir: 'desc' };
+        renderFinancials();
       } catch (err) {
         results.innerHTML = '<p class="alert alert-error">Error: ' + err.message + '</p>';
       }
+    }
+
+    function sortFinancials(col) {
+      if (finSort.col === col) {
+        finSort.dir = finSort.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        finSort.col = col;
+        finSort.dir = (col === 'recruiter_name' || col === 'division_name') ? 'asc' : 'desc';
+      }
+      renderFinancials();
+    }
+
+    function renderFinancials() {
+      var rows = finData.rows.slice();
+      var totals = finData.totals;
+      var debug = finData.debug;
+      var dates = finData.dates;
+      var results = document.getElementById('fin-results');
+
+      var fmtMoney = function(n) { return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+      var fmtPct = function(n) { return (n || 0).toFixed(2) + '%'; };
+      var numStyle = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;';
+      var hdrRight = 'text-align:right;';
+      var hdrStyle = 'cursor:pointer;user-select:none;';
+
+      rows.sort(function(a, b) {
+        var av = a[finSort.col], bv = b[finSort.col];
+        if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+        if (av < bv) return finSort.dir === 'asc' ? -1 : 1;
+        if (av > bv) return finSort.dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      var arrow = function(col) {
+        if (finSort.col !== col) return '';
+        return finSort.dir === 'asc' ? ' &#9650;' : ' &#9660;';
+      };
+
+      var debugHtml = '';
+      if (debug.symplrQueryRows !== undefined) {
+        debugHtml = '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:0.5rem;">Data sources: Symplr ' + debug.symplrQueryRows + ' rows, Bullhorn ' + debug.bullhornQueryRows + ' rows | Config maps: Symplr ' + debug.symplrConfigMapSize + ', Bullhorn ' + debug.bullhornConfigMapSize + '</p>';
+      }
+      if (debug.bullhornError) {
+        debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
+      }
+      var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
+      html += '<table style="table-layout:fixed;width:100%;font-size:0.85rem;"><colgroup>' +
+        '<col style="width:4%"><col style="width:17%"><col style="width:10%">' +
+        '<col style="width:5%"><col style="width:12%"><col style="width:12%">' +
+        '<col style="width:10%"><col style="width:10%">' +
+        '<col style="width:12%"><col style="width:8%">' +
+        '</colgroup>';
+      html += '<thead><tr><th>#</th>' +
+        '<th style="' + hdrStyle + '" onclick="sortFinancials(\'recruiter_name\')">Name' + arrow('recruiter_name') + '</th>' +
+        '<th style="' + hdrStyle + '" onclick="sortFinancials(\'division_name\')">Division' + arrow('division_name') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'head_count\')">HC' + arrow('head_count') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'total_bill\')">Total Bill' + arrow('total_bill') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'total_pay\')">Total Pay' + arrow('total_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'taxable_pay\')">Taxable' + arrow('taxable_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'non_taxable_pay\')">Non-Tax' + arrow('non_taxable_pay') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'gross_margin_dollars\')">GM$' + arrow('gross_margin_dollars') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\'gross_profit_pct\')">GP%' + arrow('gross_profit_pct') + '</th></tr></thead><tbody>';
+
+      rows.forEach(function(r, i) {
+        html += '<tr><td>' + (i + 1) + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
+          '<td style="' + numStyle + '">' + r.head_count + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(r.taxable_pay) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(r.non_taxable_pay) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtMoney(r.gross_margin_dollars) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
+      });
+
+      // Grand totals
+      html += '<tr style="font-weight:bold;background:#dbeafe;border-top:2px solid #93c5fd;"><td></td><td>TOTALS</td><td></td>' +
+        '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtMoney(totals.total_taxable_pay) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtMoney(totals.total_non_taxable_pay) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
+        '<td style="' + numStyle + '">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
+      html += '</tbody></table>';
+      results.innerHTML = html;
+      document.getElementById('exportFinBtn').style.display = '';
+    }
+
+    async function exportFinancials() {
+      if (!finData.rows.length) return;
+
+      // Fetch user configs to enrich the export
+      var configMap = {};
+      try {
+        var res = await fetch(API_BASE + '/user-configs?includeInactive=true');
+        var configs = await res.json();
+        configs.forEach(function(c) { configMap[c.user_id] = c; });
+      } catch (e) { /* proceed without extra fields */ }
+
+      var headers = ['Name', 'Symplr ID', 'Bullhorn ID', 'Title', 'Role', 'Email', 'Division', 'Head Count', 'Total Bill', 'Total Pay', 'Taxable Pay', 'Non-Taxable Pay', 'GM$', 'GP%'];
+      var csvRows = [headers.join(',')];
+
+      finData.rows.forEach(function(r) {
+        var cfg = configMap[r.recruiter_user_id] || {};
+        var row = [
+          '"' + (r.recruiter_name || '').replace(/"/g, '""') + '"',
+          cfg.symplr_user_id || '',
+          cfg.bullhorn_user_id || '',
+          '"' + (cfg.title || '').replace(/"/g, '""') + '"',
+          cfg.role || '',
+          '"' + (cfg.email || '').replace(/"/g, '""') + '"',
+          '"' + (r.division_name || '').replace(/"/g, '""') + '"',
+          r.head_count,
+          r.total_bill,
+          r.total_pay,
+          r.taxable_pay,
+          r.non_taxable_pay,
+          r.gross_margin_dollars,
+          r.gross_profit_pct
+        ];
+        csvRows.push(row.join(','));
+      });
+
+      var csv = csvRows.join('\\n');
+      var blob = new Blob([csv], { type: 'text/csv' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'financials_' + finData.dates.weekStart + '_' + finData.dates.weekEnd + '.csv';
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
     // =========== USER ADMIN ===========
@@ -1441,7 +1516,7 @@ app.http('adminPortal', {
         var roleBadge = u.role === 'recruiter'
           ? '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Recruiter</span>'
           : u.role === 'account_manager'
-          ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Acct Mgr</span>'
+          ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:0.75rem;white-space:nowrap;">Acct Mgr</span>'
           : '<span style="background:#f3f4f6;color:#6b7280;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Unknown</span>';
         var statusBadge = u.is_active
           ? '<span class="badge badge-active">Active</span>'
