@@ -119,35 +119,74 @@ class StackRankingService {
   }
 
   /**
-   * Re-check divisions for existing Bullhorn users that are on a default division.
-   * Looks up their department from Bullhorn and updates if a match is found.
+   * Refresh division, title, and role for users that haven't been manually configured.
+   * Only touches users with role='unknown' — once a role is set (manually or by this method),
+   * the user is considered configured and won't be overwritten on future runs.
    */
-  async refreshBullhornDivisions(): Promise<number> {
-    const bullhornConfigs = await databaseService.getAtsIdToConfigMap('bullhorn', true);
-    const defaultDivId = 1; // Nursing — the default fallback
-    let updated = 0;
+  async refreshUserMetadata(): Promise<{ divisions: number; roles: number }> {
+    const allConfigs = await databaseService.getUserConfigs(true);
+    let divisions = 0;
+    let roles = 0;
 
-    for (const [atsId, config] of bullhornConfigs) {
-      if (config.division_id !== defaultDivId) continue; // already assigned
+    for (const config of allConfigs) {
+      if (config.role !== 'unknown') continue; // manually configured — don't touch
 
       try {
-        const deptName = await databaseService.getUserDepartmentFromBullhorn(atsId);
-        if (!deptName) continue;
+        const updates: { config_id: number; division_id?: number; title?: string; role?: RecruiterRole } = {
+          config_id: config.config_id,
+        };
 
-        let matchedDivId = await databaseService.findDivisionByName(deptName);
-        if (!matchedDivId) {
-          matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
+        // Refresh title and role
+        let title: string | null = null;
+        if (config.symplr_user_id) {
+          title = await databaseService.getUserTitleFromCtmsync(config.symplr_user_id);
+        } else if (config.bullhorn_user_id) {
+          title = await databaseService.getUserTitleFromBullhorn(config.bullhorn_user_id);
         }
-        if (matchedDivId && matchedDivId !== defaultDivId) {
-          await databaseService.updateUserConfig({ config_id: config.config_id, division_id: matchedDivId });
-          console.log(`Updated Bullhorn user ${config.user_name} (${atsId}) division from ${defaultDivId} to ${matchedDivId} (dept: ${deptName})`);
-          updated++;
+        if (title) {
+          const role = this.inferRole(title);
+          updates.title = title;
+          updates.role = role;
+          roles++;
+        }
+
+        // Refresh division for Bullhorn users
+        if (config.bullhorn_user_id) {
+          const deptName = await databaseService.getUserDepartmentFromBullhorn(config.bullhorn_user_id);
+          if (deptName) {
+            let matchedDivId = await databaseService.findDivisionByName(deptName);
+            if (!matchedDivId) {
+              matchedDivId = await databaseService.findDivisionByNamePartial(deptName);
+            }
+            if (matchedDivId) {
+              updates.division_id = matchedDivId;
+              divisions++;
+            }
+          }
+        }
+
+        // Refresh division for Symplr users from email domain
+        if (config.symplr_user_id) {
+          const email = config.email || await databaseService.getUserEmailFromCtmsync(config.symplr_user_id);
+          if (email && email.toLowerCase().includes('@ghreducation.com')) {
+            const eduDivId = await databaseService.findDivisionByName('Education');
+            if (eduDivId) { updates.division_id = eduDivId; divisions++; }
+          } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
+            const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
+            if (naDivId) { updates.division_id = naDivId; divisions++; }
+          }
+        }
+
+        // Apply if anything changed
+        if (updates.title || updates.role || updates.division_id) {
+          await databaseService.updateUserConfig(updates);
+          console.log(`Refreshed user ${config.user_name}: title="${updates.title}", role=${updates.role}, division=${updates.division_id}`);
         }
       } catch (err) {
-        console.warn(`Failed to refresh division for Bullhorn user ${atsId}:`, err);
+        console.warn(`Failed to refresh metadata for user ${config.config_id} (${config.user_name}):`, err);
       }
     }
-    return updated;
+    return { divisions, roles };
   }
 
   /**
@@ -172,17 +211,19 @@ class StackRankingService {
 
     console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // 2. Sync divisions from ATS so Bullhorn department names exist as divisions,
-    //    then fix any existing users stuck on the default division
-    if (bullhornData.length > 0) {
-      try {
+    // 2. Sync divisions from ATS, then refresh metadata (division, title, role)
+    //    for users with role='unknown' — manually configured users are never overwritten
+    try {
+      if (bullhornData.length > 0) {
         const newDivs = await databaseService.syncDivisionsFromAts();
         if (newDivs > 0) console.log(`Synced ${newDivs} new divisions from ATS`);
-        const fixedDivs = await this.refreshBullhornDivisions();
-        if (fixedDivs > 0) console.log(`Fixed divisions for ${fixedDivs} existing Bullhorn users`);
-      } catch (err) {
-        console.warn('Division sync/refresh failed, continuing with existing divisions:', err);
       }
+      const refreshed = await this.refreshUserMetadata();
+      if (refreshed.divisions > 0 || refreshed.roles > 0) {
+        console.log(`Refreshed user metadata: ${refreshed.divisions} divisions, ${refreshed.roles} roles`);
+      }
+    } catch (err) {
+      console.warn('User data refresh failed, continuing:', err);
     }
 
     // 3. Auto-discover new users (check ATS-specific columns)
@@ -351,14 +392,14 @@ class StackRankingService {
       await this.autoDiscoverUsers(bullhornData, 'bullhorn', checkedAtsIds);
     }
 
-    // Build ATS-to-config maps — include inactive users since financials shows everyone
+    // Build ATS-to-config maps — only active users (inactive = hidden from everything)
     const [symplrIdToConfig, bullhornIdToConfig] = await Promise.all([
-      databaseService.getAtsIdToConfigMap('symplr', true),
-      databaseService.getAtsIdToConfigMap('bullhorn', true),
+      databaseService.getAtsIdToConfigMap('symplr'),
+      databaseService.getAtsIdToConfigMap('bullhorn'),
     ]);
 
-    // Aggregate by config_id when known, or by a synthetic key for unknown users
-    // This ensures ALL users with placement data appear in financials
+    // Aggregate by config_id — only users with an active config entry appear
+    // Users not in user_config or set to inactive are excluded
     const aggMap = new Map<string, {
       recruiter_user_id: number;
       recruiter_name: string;
@@ -371,9 +412,9 @@ class StackRankingService {
     const aggregateFin = (d: PlacementData, atsSystem: AtsSystem) => {
       const configMap = atsSystem === 'symplr' ? symplrIdToConfig : bullhornIdToConfig;
       const config = configMap.get(d.recruiter_user_id);
-      // Use config_id as key if known, otherwise use ats:userId to avoid collisions
-      const key = config ? `config:${config.config_id}` : `${atsSystem}:${d.recruiter_user_id}`;
+      if (!config) return; // not in user_config or inactive — skip
 
+      const key = `config:${config.config_id}`;
       const existing = aggMap.get(key);
       if (existing) {
         existing.head_count += d.head_count;
@@ -381,9 +422,9 @@ class StackRankingService {
         existing.total_pay_amount += d.total_pay_amount;
       } else {
         aggMap.set(key, {
-          recruiter_user_id: config ? config.user_id : d.recruiter_user_id,
-          recruiter_name: config ? config.user_name : d.recruiter_name,
-          division_id: config ? config.division_id : d.division_id,
+          recruiter_user_id: config.user_id,
+          recruiter_name: config.user_name,
+          division_id: config.division_id,
           head_count: d.head_count,
           total_bill_amount: d.total_bill_amount,
           total_pay_amount: d.total_pay_amount,

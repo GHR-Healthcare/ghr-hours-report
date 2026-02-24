@@ -696,12 +696,13 @@ app.http('adminPortal', {
       <div class="sub-panel active" id="sr-recalc">
         <div class="card">
           <h3>Calculate Ranking</h3>
-          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
             <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
             <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
             <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
             <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
             <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
+            <button class="btn btn-secondary" onclick="calculateWithPriorWeek()" title="Calculates the prior week first (for baseline), then the selected week so rank changes appear">Calculate with Prior Week</button>
           </div>
           <div id="sr-results"></div>
         </div>
@@ -1161,6 +1162,35 @@ app.http('adminPortal', {
         document.getElementById('sr-week-start').value = prevStart;
         document.getElementById('sr-week-end').value = prevEnd;
       }
+    }
+
+    async function calculateWithPriorWeek() {
+      var dates = getStackRankingDates();
+      var results = document.getElementById('sr-results');
+      document.getElementById('sr-preview-frame').style.display = 'none';
+
+      // Calculate the prior week dates (7 days before selected range)
+      var priorStart = new Date(dates.weekStart + 'T00:00:00');
+      priorStart.setDate(priorStart.getDate() - 7);
+      var priorEnd = new Date(priorStart);
+      priorEnd.setDate(priorStart.getDate() + 6);
+      var priorStartStr = priorStart.toISOString().split('T')[0];
+      var priorEndStr = priorEnd.toISOString().split('T')[0];
+
+      // Step 1: Calculate prior week (baseline)
+      results.innerHTML = '<p>Step 1/2: Calculating prior week (' + priorStartStr + ' to ' + priorEndStr + ')...</p>';
+      try {
+        var res1 = await fetch(API_BASE + '/stack-ranking?weekStart=' + priorStartStr + '&weekEnd=' + priorEndStr);
+        var data1 = await res1.json();
+        if (data1.error) { results.innerHTML = '<p class="alert alert-error">Prior week failed: ' + data1.error + '</p>'; return; }
+        results.innerHTML = '<p>Step 1/2 complete: Prior week calculated (' + (data1.rows || []).length + ' ranked). Now calculating selected week...</p>';
+      } catch (err) {
+        results.innerHTML = '<p class="alert alert-error">Prior week failed: ' + err.message + '</p>';
+        return;
+      }
+
+      // Step 2: Calculate selected week (will now have prior week data for rank changes)
+      await loadStackRanking();
     }
 
     async function loadStackRanking() {

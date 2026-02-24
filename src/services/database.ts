@@ -894,11 +894,15 @@ class DatabaseService {
 
   // Get user title from ctmsync users table
   async getUserTitleFromCtmsync(userId: number): Promise<string | null> {
-    const pool = await this.getCtmsyncPool();
-    const result = await pool.request()
-      .input('userId', sql.Int, userId)
-      .query(`SELECT title FROM dbo.users WHERE userid = @userId`);
-    return result.recordset[0]?.title || null;
+    try {
+      const pool = await this.getCtmsyncPool();
+      const result = await pool.request()
+        .input('userId', sql.Int, userId)
+        .query(`SELECT title FROM dbo.users WHERE userid = @userId`);
+      return result.recordset[0]?.title || null;
+    } catch {
+      return null;
+    }
   }
 
   async getUserEmailFromCtmsync(userId: number): Promise<string | null> {
