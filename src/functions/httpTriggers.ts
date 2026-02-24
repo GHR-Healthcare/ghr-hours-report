@@ -798,11 +798,12 @@ app.http('adminPortal', {
       </table>
       </div>
     </div>
-  </div>
 
     <!-- Settings Panel -->
     <div class="panel" id="settings-panel">
-      <h2>App Settings</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+        <h2 style="margin:0;">App Settings</h2>
+      </div>
 
       <table>
         <thead>
@@ -817,31 +818,33 @@ app.http('adminPortal', {
         <tbody id="settings-table"></tbody>
       </table>
 
-      <div class="card" style="margin-top: 1.5rem;">
-        <h3>Add / Edit Setting</h3>
-        <div class="form-group">
-          <label>Key</label>
-          <select id="setting-key" style="width:100%;padding:0.625rem;border:1px solid #d1d5db;border-radius:6px;font-size:1rem;">
-            <option value="HOURS_REPORT_FROM_EMAIL">HOURS_REPORT_FROM_EMAIL</option>
-            <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
-            <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL</option>
-            <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL</option>
-          </select>
+      <div class="card" style="margin-top:1rem;padding:1rem;">
+        <h3 style="margin:0 0 0.75rem 0;font-size:1rem;">Add / Edit Setting</h3>
+        <div style="display:grid;grid-template-columns:1fr 2fr 1fr auto;gap:0.75rem;align-items:end;">
+          <div>
+            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Key</label>
+            <select id="setting-key" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;">
+              <option value="HOURS_REPORT_FROM_EMAIL">HOURS_REPORT_FROM_EMAIL</option>
+              <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
+              <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL</option>
+              <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Value</label>
+            <input type="text" id="setting-value" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;font-family:monospace;" placeholder="Comma-separated emails">
+          </div>
+          <div>
+            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Description</label>
+            <input type="text" id="setting-description" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="Optional">
+          </div>
+          <button class="btn btn-primary" onclick="saveSetting()" style="padding:0.4rem 1rem;font-size:0.875rem;">Save</button>
         </div>
-        <div class="form-group">
-          <label>Value</label>
-          <textarea id="setting-value" rows="3" style="width:100%;padding:0.625rem;border:1px solid #d1d5db;border-radius:6px;font-size:1rem;font-family:monospace;" placeholder="Enter value (for recipient lists, use comma-separated emails)"></textarea>
-        </div>
-        <div class="form-group">
-          <label>Description</label>
-          <input type="text" id="setting-description" placeholder="Optional description">
-        </div>
-        <button class="btn btn-primary" onclick="saveSetting()">Save Setting</button>
       </div>
 
-      <div class="card" style="margin-top: 1.5rem;">
+      <div class="card" style="margin-top:1rem;padding:1rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-          <h3 style="margin:0;">Divisions</h3>
+          <h3 style="margin:0;font-size:1rem;">Divisions</h3>
           <button class="btn btn-secondary" onclick="syncDivisions()" style="font-size:0.8rem;">Sync from ATS</button>
         </div>
         <table>

@@ -86,7 +86,8 @@ class StackRankingService {
           email = await databaseService.getUserEmailFromCtmsync(d.recruiter_user_id);
           // Infer Symplr division from email domain
           if (email && email.toLowerCase().includes('@ghreducation.com')) {
-            const eduDivId = await databaseService.findDivisionByName('Education');
+            const eduDivId = await databaseService.findDivisionByName('Education')
+              || await databaseService.findDivisionByNamePartial('Education');
             if (eduDivId) divisionId = eduDivId;
           } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
             const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
@@ -169,7 +170,8 @@ class StackRankingService {
         if (config.symplr_user_id) {
           const email = config.email || await databaseService.getUserEmailFromCtmsync(config.symplr_user_id);
           if (email && email.toLowerCase().includes('@ghreducation.com')) {
-            const eduDivId = await databaseService.findDivisionByName('Education');
+            const eduDivId = await databaseService.findDivisionByName('Education')
+              || await databaseService.findDivisionByNamePartial('Education');
             if (eduDivId) { updates.division_id = eduDivId; divisions++; }
           } else if (email && email.toLowerCase().includes('@ghrhealthcare.com')) {
             const naDivId = await databaseService.findDivisionByName('Non-Acute Nursing');
@@ -211,13 +213,11 @@ class StackRankingService {
 
     console.log(`Stack ranking: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // 2. Sync divisions from ATS, then refresh metadata (division, title, role)
-    //    for users with role='unknown' — manually configured users are never overwritten
+    // 2. Sync divisions from ATS (always — creates static Symplr divisions too),
+    //    then refresh metadata (division, title, role) for unconfigured users
     try {
-      if (bullhornData.length > 0) {
-        const newDivs = await databaseService.syncDivisionsFromAts();
-        if (newDivs > 0) console.log(`Synced ${newDivs} new divisions from ATS`);
-      }
+      const newDivs = await databaseService.syncDivisionsFromAts();
+      if (newDivs > 0) console.log(`Synced ${newDivs} new divisions from ATS`);
       const refreshed = await this.refreshUserMetadata();
       if (refreshed.divisions > 0 || refreshed.roles > 0) {
         console.log(`Refreshed user metadata: ${refreshed.divisions} divisions, ${refreshed.roles} roles`);
@@ -378,12 +378,10 @@ class StackRankingService {
 
     console.log(`Financials: Symplr returned ${symplrData.length} records, Bullhorn returned ${bullhornData.length} records`);
 
-    // Sync divisions from ATS so Bullhorn department names exist as divisions
-    if (bullhornData.length > 0) {
-      try {
-        await databaseService.syncDivisionsFromAts();
-      } catch { /* continue with existing divisions */ }
-    }
+    // Sync divisions from ATS (always — creates static Symplr divisions too)
+    try {
+      await databaseService.syncDivisionsFromAts();
+    } catch { /* continue with existing divisions */ }
 
     // Auto-discover new users from ATS data (same as calculateRanking)
     const checkedAtsIds = new Set<string>();

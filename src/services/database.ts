@@ -995,19 +995,21 @@ class DatabaseService {
       }
     }
 
-    // 2. Combine with Symplr static divisions
-    const allDivisionNames = [...bullhornDepts, 'Education', 'Non-Acute Nursing'];
-
-    // 3. Get existing divisions
+    // 2. Get existing divisions
     const existing = await this.getDivisions(true);
-    const existingNames = new Set(existing.map(d => d.division_name.toLowerCase()));
+    const existingNames = existing.map(d => d.division_name.toLowerCase());
 
-    // 4. Create any missing divisions
+    // 3. Add Symplr static divisions if they don't already exist (exact match only)
+    const staticDivisions = ['Education', 'Non-Acute Nursing'];
+    const allDivisionNames = [...bullhornDepts, ...staticDivisions.filter(s => !existingNames.includes(s.toLowerCase()))];
+
+    // 4. Create any missing divisions (exact match check for Bullhorn depts)
+    const existingExact = new Set(existingNames);
     let created = 0;
     for (const name of allDivisionNames) {
-      if (!existingNames.has(name.toLowerCase())) {
+      if (!existingExact.has(name.toLowerCase())) {
         await this.createDivision({ division_name: name, display_order: 99 });
-        existingNames.add(name.toLowerCase());
+        existingExact.add(name.toLowerCase());
         created++;
       }
     }
