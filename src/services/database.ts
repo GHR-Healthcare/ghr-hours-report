@@ -97,10 +97,29 @@ class DatabaseService {
     return this.ctmsyncPool;
   }
 
+  getBullhornConfigSummary(): Record<string, unknown> | null {
+    if (!this.bullhornConfig) return null;
+    return {
+      server: this.bullhornConfig.server,
+      port: this.bullhornConfig.port,
+      database: this.bullhornConfig.database,
+      user: this.bullhornConfig.user,
+      encrypt: this.bullhornConfig.options?.encrypt,
+      trustServerCertificate: this.bullhornConfig.options?.trustServerCertificate,
+    };
+  }
+
   async getBullhornPool(): Promise<sql.ConnectionPool> {
     if (!this.bullhornPool) {
       if (!this.bullhornConfig) throw new Error('Bullhorn connection not configured');
-      this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
+      // Retry once on transient connection failure
+      try {
+        this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
+      } catch (firstErr) {
+        console.warn('Bullhorn connection attempt 1 failed, retrying in 2s:', firstErr);
+        await new Promise(r => setTimeout(r, 2000));
+        this.bullhornPool = await new sql.ConnectionPool(this.bullhornConfig).connect();
+      }
     }
     return this.bullhornPool;
   }
