@@ -1201,7 +1201,7 @@ class DatabaseService {
 
       // Query actual bill/pay from BillableCharge and PayableCharge tables
       // Credit assigned via PlacementCommission (role: Sales=AM, Recruiting=Recruiter)
-      // Each person's share = total * commissionPercentage / 100
+      // Each person's share = total * commissionPercentage (stored as decimal, e.g. 0.5 = 50%)
       const result = await pool.request()
         .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
@@ -1216,16 +1216,15 @@ class DatabaseService {
             LEFT JOIN (
               SELECT placementID, SUM(subtotal) AS bill_subtotal
               FROM dbo.BillableCharge
-              WHERE CAST(dateAdded AS DATE) BETWEEN @weekStart AND @weekEnd
               GROUP BY placementID
             ) bc ON p.placementID = bc.placementID
             LEFT JOIN (
               SELECT placementID, SUM(subtotal) AS pay_subtotal
               FROM dbo.PayableCharge
-              WHERE CAST(dateAdded AS DATE) BETWEEN @weekStart AND @weekEnd
               GROUP BY placementID
             ) pc ON p.placementID = pc.placementID
             WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
+              AND CAST(p.dateBegin AS DATE) BETWEEN @weekStart AND @weekEnd
               AND (bc.bill_subtotal IS NOT NULL OR pc.pay_subtotal IS NOT NULL)
           )
           SELECT
