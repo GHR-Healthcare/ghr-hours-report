@@ -12,6 +12,7 @@ export interface SyncStats {
   emailsSet: number;
   rolesSet: number;
   divisionsSet: number;
+  deactivated: number;
 }
 
 class UserSyncService {
@@ -104,7 +105,7 @@ class UserSyncService {
    * Called from the nightly cleanup timer — single source of truth.
    */
   async syncAllUsers(): Promise<SyncStats> {
-    const stats: SyncStats = { newUsers: 0, mergedUsers: 0, titlesSet: 0, emailsSet: 0, rolesSet: 0, divisionsSet: 0 };
+    const stats: SyncStats = { newUsers: 0, mergedUsers: 0, titlesSet: 0, emailsSet: 0, rolesSet: 0, divisionsSet: 0, deactivated: 0 };
 
     // 1. Merge duplicate configs (same person in both ATS systems, matched by email)
     await this.mergeExistingDuplicates(stats);
@@ -139,7 +140,10 @@ class UserSyncService {
     // 4. Refresh existing users with unset fields (per-field checks)
     await this.refreshExistingUsers(stats);
 
-    console.log(`User sync complete: ${stats.newUsers} new, ${stats.mergedUsers} merged, ${stats.emailsSet} emails set, ${stats.titlesSet} titles set, ${stats.rolesSet} roles set, ${stats.divisionsSet} divisions set`);
+    // 5. Deactivate users who are inactive in their ATS
+    await this.deactivateInactiveUsers(stats);
+
+    console.log(`User sync complete: ${stats.newUsers} new, ${stats.mergedUsers} merged, ${stats.emailsSet} emails set, ${stats.titlesSet} titles set, ${stats.rolesSet} roles set, ${stats.divisionsSet} divisions set, ${stats.deactivated} deactivated`);
     return stats;
   }
 
@@ -390,6 +394,45 @@ class UserSyncService {
         }
       } catch (err) {
         console.warn(`User sync: failed to refresh user ${config.config_id} (${config.user_name}):`, err);
+      }
+    }
+  }
+  /**
+   * Deactivate users who are inactive/suspended in their ATS.
+   * For dual-ATS users, both must be inactive to deactivate.
+   */
+  private async deactivateInactiveUsers(stats: SyncStats): Promise<void> {
+    const allConfigs = await databaseService.getUserConfigs(false); // only active users
+
+    for (const config of allConfigs) {
+      if (!config.symplr_user_id && !config.bullhorn_user_id) continue; // manual user, skip
+
+      try {
+        let symplrActive = true;
+        let bullhornActive = true;
+
+        if (config.symplr_user_id) {
+          symplrActive = await databaseService.isSymplrUserActive(config.symplr_user_id);
+        }
+        if (config.bullhorn_user_id) {
+          bullhornActive = await databaseService.isBullhornUserActive(config.bullhorn_user_id);
+        }
+
+        // For dual-ATS users, only deactivate if inactive in both systems
+        const shouldDeactivate = config.symplr_user_id && config.bullhorn_user_id
+          ? !symplrActive && !bullhornActive
+          : !symplrActive || !bullhornActive;
+
+        if (shouldDeactivate) {
+          await databaseService.updateUserConfig({
+            config_id: config.config_id,
+            is_active: false,
+          });
+          stats.deactivated++;
+          console.log(`User sync: deactivated ${config.user_name} (config ${config.config_id}) — Symplr active: ${symplrActive}, Bullhorn active: ${bullhornActive}`);
+        }
+      } catch (err) {
+        console.warn(`User sync: failed to check active status for ${config.config_id} (${config.user_name}):`, err);
       }
     }
   }

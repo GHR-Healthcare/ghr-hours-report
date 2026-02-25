@@ -786,8 +786,14 @@ app.http('adminPortal', {
     <div class="panel" id="user-admin-panel">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h2>User Admin</h2>
-        <div style="display:flex;gap:0.5rem;">
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <select id="user-status-filter" onchange="renderUsers()" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.85rem;">
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="all">All</option>
+          </select>
           <button class="btn" onclick="syncUsers()" id="syncUsersBtn">Sync Users</button>
+          <button class="btn btn-secondary" onclick="openMergeModal()">Merge Users</button>
           <button class="btn btn-primary" onclick="openAddUserModal()">+ Add User</button>
         </div>
       </div>
@@ -962,6 +968,29 @@ app.http('adminPortal', {
           <button type="submit" class="btn btn-primary">Save</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Merge Users Modal -->
+  <div class="modal" id="merge-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Merge Users</h2>
+        <button class="modal-close" onclick="closeMergeModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Primary User (keep this record)</label>
+        <select id="merge-primary" onchange="previewMerge()" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;"></select>
+      </div>
+      <div class="form-group">
+        <label>Secondary User (deactivate after merge)</label>
+        <select id="merge-secondary" onchange="previewMerge()" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;"></select>
+      </div>
+      <div id="merge-preview" style="margin:1rem 0;padding:0.75rem;background:#f9fafb;border-radius:6px;font-size:0.85rem;display:none;"></div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1.5rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeMergeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitMerge()" id="merge-submit-btn">Merge</button>
+      </div>
     </div>
   </div>
 
@@ -1587,13 +1616,20 @@ app.http('adminPortal', {
 
     function renderUsers() {
       var tbody = document.getElementById('users-table');
-      if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="12" style="color:#6b7280;text-align:center;">No users yet. Users are auto-discovered when you run calculations.</td></tr>';
+      var statusFilter = document.getElementById('user-status-filter').value;
+      var filtered = users.filter(function(u) {
+        if (statusFilter === 'active') return u.is_active;
+        if (statusFilter === 'inactive') return !u.is_active;
+        return true;
+      });
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="12" style="color:#6b7280;text-align:center;">No users match the current filter.</td></tr>';
+        document.getElementById('user-stats').innerHTML = '';
         return;
       }
 
       var html = '';
-      users.forEach(function(u) {
+      filtered.forEach(function(u) {
         var roleBadge = u.role === 'recruiter'
           ? '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px;font-size:0.75rem;">Recruiter</span>'
           : u.role === 'account_manager'
@@ -1668,6 +1704,71 @@ app.http('adminPortal', {
 
     function closeModal() {
       document.getElementById('user-modal').classList.remove('active');
+    }
+
+    function openMergeModal() {
+      var opts = '<option value="">-- Select user --</option>';
+      users.forEach(function(u) {
+        var label = u.user_name + (u.email ? ' (' + u.email + ')' : '') + (u.is_active ? '' : ' [inactive]');
+        opts += '<option value="' + u.config_id + '">' + label + '</option>';
+      });
+      document.getElementById('merge-primary').innerHTML = opts;
+      document.getElementById('merge-secondary').innerHTML = opts;
+      document.getElementById('merge-preview').style.display = 'none';
+      document.getElementById('merge-modal').classList.add('active');
+    }
+
+    function closeMergeModal() {
+      document.getElementById('merge-modal').classList.remove('active');
+    }
+
+    function previewMerge() {
+      var pId = parseInt(document.getElementById('merge-primary').value);
+      var sId = parseInt(document.getElementById('merge-secondary').value);
+      var preview = document.getElementById('merge-preview');
+      if (!pId || !sId || pId === sId) { preview.style.display = 'none'; return; }
+      var primary = users.find(function(u) { return u.config_id === pId; });
+      var secondary = users.find(function(u) { return u.config_id === sId; });
+      if (!primary || !secondary) { preview.style.display = 'none'; return; }
+
+      var changes = [];
+      if (!primary.symplr_user_id && secondary.symplr_user_id) changes.push('Symplr ID ' + secondary.symplr_user_id + ' will be linked to primary');
+      if (!primary.bullhorn_user_id && secondary.bullhorn_user_id) changes.push('Bullhorn ID ' + secondary.bullhorn_user_id + ' will be linked to primary');
+      if (!primary.email && secondary.email) changes.push('Email "' + secondary.email + '" will be copied to primary');
+      if (!primary.title && secondary.title) changes.push('Title "' + secondary.title + '" will be copied to primary');
+      if (!changes.length) changes.push('No fields to copy (primary already has all data)');
+      changes.push('<strong>' + secondary.user_name + '</strong> will be deactivated');
+
+      preview.innerHTML = '<strong>Merge preview:</strong><ul style="margin:0.5rem 0 0 1rem;">' + changes.map(function(c) { return '<li>' + c + '</li>'; }).join('') + '</ul>';
+      preview.style.display = 'block';
+    }
+
+    async function submitMerge() {
+      var pId = parseInt(document.getElementById('merge-primary').value);
+      var sId = parseInt(document.getElementById('merge-secondary').value);
+      if (!pId || !sId || pId === sId) { showAlert('Select two different users', 'error'); return; }
+      var secondary = users.find(function(u) { return u.config_id === sId; });
+      if (!confirm('Merge ' + secondary.user_name + ' into the primary user? This will deactivate ' + secondary.user_name + '.')) return;
+
+      var btn = document.getElementById('merge-submit-btn');
+      btn.textContent = 'Merging...';
+      btn.disabled = true;
+      try {
+        var res = await fetch(API_BASE + '/user-configs/merge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ primaryConfigId: pId, secondaryConfigId: sId })
+        });
+        var data = await res.json();
+        if (res.ok) {
+          showAlert('Users merged successfully');
+          closeMergeModal();
+          loadUsers();
+        } else {
+          showAlert('Error: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
+      finally { btn.textContent = 'Merge'; btn.disabled = false; }
     }
 
     document.getElementById('user-form').addEventListener('submit', async function(e) {
@@ -2127,6 +2228,30 @@ app.http('updateUserConfig', {
     } catch (error) {
       context.error('Error updating user config:', error);
       return { status: 500, jsonBody: { error: 'Failed to update user config' } };
+    }
+  }
+});
+
+app.http('mergeUserConfigs', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'user-configs/merge',
+  handler: async (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
+    try {
+      const body = await request.json() as any;
+      const { primaryConfigId, secondaryConfigId } = body;
+      if (!primaryConfigId || !secondaryConfigId) {
+        return { status: 400, jsonBody: { error: 'Both primaryConfigId and secondaryConfigId are required' } };
+      }
+      if (primaryConfigId === secondaryConfigId) {
+        return { status: 400, jsonBody: { error: 'Cannot merge a user with themselves' } };
+      }
+      const merged = await databaseService.mergeUserConfigs(primaryConfigId, secondaryConfigId);
+      context.log(`Merged user configs: ${secondaryConfigId} into ${primaryConfigId}`);
+      return { jsonBody: merged };
+    } catch (error) {
+      context.error('Error merging user configs:', error);
+      return { status: 500, jsonBody: { error: 'Merge failed: ' + (error instanceof Error ? error.message : String(error)) } };
     }
   }
 });

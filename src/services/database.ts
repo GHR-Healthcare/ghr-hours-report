@@ -508,6 +508,44 @@ class DatabaseService {
     }
   }
 
+  async mergeUserConfigs(primaryId: number, secondaryId: number): Promise<UserConfig> {
+    const pool = await this.getPool();
+
+    // Fetch both configs
+    const primaryResult = await pool.request()
+      .input('primaryId', sql.Int, primaryId)
+      .query('SELECT * FROM dbo.user_config WHERE config_id = @primaryId');
+    const primary = primaryResult.recordset[0];
+    if (!primary) throw new Error(`Primary user config ${primaryId} not found`);
+
+    const secondaryResult = await pool.request()
+      .input('secondaryId', sql.Int, secondaryId)
+      .query('SELECT * FROM dbo.user_config WHERE config_id = @secondaryId');
+    const secondary = secondaryResult.recordset[0];
+    if (!secondary) throw new Error(`Secondary user config ${secondaryId} not found`);
+
+    // Build updates: copy missing fields from secondary to primary
+    const updates: any = { config_id: primaryId };
+    if (!primary.symplr_user_id && secondary.symplr_user_id) updates.symplr_user_id = secondary.symplr_user_id;
+    if (!primary.bullhorn_user_id && secondary.bullhorn_user_id) updates.bullhorn_user_id = secondary.bullhorn_user_id;
+    if (!primary.email && secondary.email) updates.email = secondary.email;
+    if (!primary.title && secondary.title) updates.title = secondary.title;
+
+    // Update primary with merged fields
+    if (Object.keys(updates).length > 1) {
+      await this.updateUserConfig(updates);
+    }
+
+    // Deactivate secondary
+    await this.updateUserConfig({ config_id: secondaryId, is_active: false });
+
+    // Return updated primary
+    const result = await pool.request()
+      .input('id', sql.Int, primaryId)
+      .query('SELECT * FROM dbo.user_config WHERE config_id = @id');
+    return result.recordset[0];
+  }
+
   async getAtsIdToConfigMap(atsSystem: AtsSystem, includeInactive = false): Promise<Map<number, UserConfig>> {
     const pool = await this.getPool();
     const column = atsSystem === 'symplr' ? 'symplr_user_id' : 'bullhorn_user_id';
@@ -959,6 +997,37 @@ class DatabaseService {
         WHERE cu.corporateUserID = @userId AND cd.isDeleted = 0
       `);
     return result.recordset[0]?.department_name || null;
+  }
+
+  // Check if a Symplr user is active (suspend != 'yes')
+  async isSymplrUserActive(userId: number): Promise<boolean> {
+    try {
+      const pool = await this.getCtmsyncPool();
+      const result = await pool.request()
+        .input('userId', sql.Int, userId)
+        .query(`SELECT suspend FROM dbo.users WHERE userid = @userId`);
+      const suspend = result.recordset[0]?.suspend;
+      if (!suspend) return true; // no record or null = assume active
+      return suspend.toLowerCase() !== 'yes';
+    } catch {
+      return true; // on error, don't deactivate
+    }
+  }
+
+  // Check if a Bullhorn user is active (enabled = 1)
+  async isBullhornUserActive(userId: number): Promise<boolean> {
+    if (!this.bullhornConfig) return true;
+    try {
+      const pool = await this.getBullhornPool();
+      const result = await pool.request()
+        .input('userId', sql.Int, userId)
+        .query(`SELECT enabled FROM dbo.CorporateUser WHERE corporateUserID = @userId`);
+      const enabled = result.recordset[0]?.enabled;
+      if (enabled === undefined || enabled === null) return true; // no record = assume active
+      return enabled === 1 || enabled === true;
+    } catch {
+      return true; // on error, don't deactivate
+    }
   }
 
   // Find a division by name (case-insensitive exact match)
