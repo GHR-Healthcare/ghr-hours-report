@@ -1232,8 +1232,8 @@ class DatabaseService {
             pcm.userID AS recruiter_user_id,
             cu.firstName + ' ' + cu.lastName AS recruiter_name,
             COUNT(DISTINCT pch.candidateID) AS head_count,
-            SUM(pch.total_bill * pcm.commissionPercentage / 100.0) AS total_bill_amount,
-            SUM(pch.total_pay * pcm.commissionPercentage / 100.0) AS total_pay_amount
+            SUM(pch.total_bill * pcm.commissionPercentage) AS total_bill_amount,
+            SUM(pch.total_pay * pcm.commissionPercentage) AS total_pay_amount
           FROM PlacementCharges pch
           INNER JOIN dbo.PlacementCommission pcm
             ON pch.placementID = pcm.placementID

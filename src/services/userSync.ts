@@ -308,7 +308,10 @@ class UserSyncService {
       const needsEmail = !config.email;
       const needsTitle = !config.title;
       const needsRole = config.role === 'unknown';
-      const needsDivision = config.division_id === unassignedId;
+      // Always re-sync division for Bullhorn-only users — Bullhorn dept is authoritative.
+      // For Symplr/manual users, only update if currently Unassigned.
+      const isBullhornOnly = config.bullhorn_user_id != null && config.symplr_user_id == null;
+      const needsDivision = config.division_id === unassignedId || isBullhornOnly;
 
       if (!needsEmail && !needsTitle && !needsRole && !needsDivision) continue;
 
@@ -368,7 +371,11 @@ class UserSyncService {
 
           if (atsUserId) {
             const divisionId = await this.detectDivision(atsSystem, atsUserId, divEmail);
-            if (divisionId !== unassignedId) {
+            // Bullhorn-only: accept any result including Unassigned (better than wrong default)
+            // Symplr/manual: only update if we found a real division (not Unassigned)
+            const shouldUpdate = divisionId !== config.division_id &&
+              (divisionId !== unassignedId || isBullhornOnly);
+            if (shouldUpdate) {
               updates.division_id = divisionId;
               stats.divisionsSet++;
             }
