@@ -308,10 +308,11 @@ class UserSyncService {
       const needsEmail = !config.email;
       const needsTitle = !config.title;
       const needsRole = config.role === 'unknown';
-      // Always re-sync division for Bullhorn-only users — Bullhorn dept is authoritative.
-      // For Symplr/manual users, only update if currently Unassigned.
+      // Re-sync division for Bullhorn-only users (Bullhorn dept is authoritative),
+      // Symplr-only users (email domain is authoritative), or Unassigned users.
       const isBullhornOnly = config.bullhorn_user_id != null && config.symplr_user_id == null;
-      const needsDivision = config.division_id === unassignedId || isBullhornOnly;
+      const isSymplrOnly = config.symplr_user_id != null && config.bullhorn_user_id == null;
+      const needsDivision = config.division_id === unassignedId || isBullhornOnly || isSymplrOnly;
 
       if (!needsEmail && !needsTitle && !needsRole && !needsDivision) continue;
 
@@ -357,7 +358,7 @@ class UserSyncService {
           }
         }
 
-        // Detect division if Unassigned (use freshly fetched email if available)
+        // Re-detect division (use freshly fetched email if available)
         if (needsDivision) {
           const atsSystem: AtsSystem = config.bullhorn_user_id ? 'bullhorn' : 'symplr';
           const atsUserId = config.bullhorn_user_id || config.symplr_user_id;

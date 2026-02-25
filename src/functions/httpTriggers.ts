@@ -8,6 +8,7 @@ import { calculateAllHours } from '../utils/hours-calculator';
 import { stackRankingService } from '../services/stackRanking';
 import { configService } from '../services/config';
 import { userSyncService } from '../services/userSync';
+import { RankingType } from '../types';
 
 // DIVISIONS
 
@@ -582,6 +583,12 @@ app.http('adminPortal', {
     .sub-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
     .sub-panel { display: none; }
     .sub-panel.active { display: block; }
+    .role-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .role-tab { padding: 0.5rem 1.25rem; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; font-size: 0.9rem; color: #6b7280; font-weight: 500; }
+    .role-tab:hover { background: #e5e7eb; }
+    .role-tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .role-panel { display: none; }
+    .role-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -653,51 +660,106 @@ app.http('adminPortal', {
     <!-- Stack Ranking Panel -->
     <div class="panel" id="stack-ranking-panel">
       <h2>Stack Ranking</h2>
-      <div class="sub-tabs">
-        <button class="sub-tab active" data-subtab="sr-recalc" data-group="sr">Recalculate</button>
-        <button class="sub-tab" data-subtab="sr-preview" data-group="sr">Preview</button>
-        <button class="sub-tab" data-subtab="sr-email" data-group="sr">Email</button>
+
+      <div class="role-tabs">
+        <button class="role-tab active" data-role="recruiter">Recruiters</button>
+        <button class="role-tab" data-role="account_manager">Account Managers</button>
       </div>
 
-      <div class="sub-panel active" id="sr-recalc">
-        <div class="card">
-          <h3>Calculate Ranking</h3>
-          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
-            <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
-            <input type="date" id="sr-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-            <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
-            <input type="date" id="sr-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-            <button class="btn btn-primary" onclick="loadStackRanking()">Calculate</button>
-            <button class="btn btn-secondary" onclick="calculateWithPriorWeek()" title="Calculates the prior week first (for baseline), then the selected week so rank changes appear">Calculate with Prior Week</button>
+      <!-- Recruiter Role Panel -->
+      <div class="role-panel active" id="sr-recruiter-panel">
+        <div class="sub-tabs">
+          <button class="sub-tab active" data-subtab="sr-rec-recalc" data-group="sr-rec">Recalculate</button>
+          <button class="sub-tab" data-subtab="sr-rec-preview" data-group="sr-rec">Preview</button>
+          <button class="sub-tab" data-subtab="sr-rec-email" data-group="sr-rec">Email</button>
+        </div>
+        <div class="sub-panel active" id="sr-rec-recalc">
+          <div class="card">
+            <h3>Calculate Recruiter Ranking</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-rec-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-rec-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-primary" onclick="loadStackRanking('recruiter')">Calculate</button>
+              <button class="btn btn-secondary" onclick="calculateWithPriorWeek('recruiter')" title="Calculates the prior week first (for baseline), then the selected week so rank changes appear">Calculate with Prior Week</button>
+            </div>
+            <div id="sr-rec-results"></div>
           </div>
-          <div id="sr-results"></div>
+        </div>
+        <div class="sub-panel" id="sr-rec-preview">
+          <div class="card">
+            <h3>Preview Recruiter Report</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-rec-prev-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-rec-prev-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-secondary" onclick="previewStackRankingHtml('recruiter')">Preview HTML</button>
+            </div>
+            <iframe id="sr-rec-preview-frame" class="preview-frame" style="margin-top:1rem;"></iframe>
+          </div>
+        </div>
+        <div class="sub-panel" id="sr-rec-email">
+          <div class="card">
+            <h3>Send Recruiter Ranking Email</h3>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+              <button class="btn btn-primary" onclick="sendStackRankingEmail('recruiter')">Send to All Recipients</button>
+            </div>
+            <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="email" id="sr-rec-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+              <button class="btn btn-secondary" onclick="sendStackRankingTestEmail('recruiter')" id="sr-rec-send-test-btn">Send Test</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="sub-panel" id="sr-preview">
-        <div class="card">
-          <h3>Preview Report</h3>
-          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
-            <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
-            <input type="date" id="sr-prev-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-            <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
-            <input type="date" id="sr-prev-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
-            <button class="btn btn-secondary" onclick="previewStackRankingHtml()">Preview HTML</button>
-          </div>
-          <iframe id="sr-preview-frame" class="preview-frame" style="margin-top:1rem;"></iframe>
+      <!-- Account Manager Role Panel -->
+      <div class="role-panel" id="sr-am-panel">
+        <div class="sub-tabs">
+          <button class="sub-tab active" data-subtab="sr-am-recalc" data-group="sr-am">Recalculate</button>
+          <button class="sub-tab" data-subtab="sr-am-preview" data-group="sr-am">Preview</button>
+          <button class="sub-tab" data-subtab="sr-am-email" data-group="sr-am">Email</button>
         </div>
-      </div>
-
-      <div class="sub-panel" id="sr-email">
-        <div class="card">
-          <h3>Send Stack Ranking Email</h3>
-          <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-            <button class="btn btn-primary" onclick="sendStackRankingEmail()">Send to All Recipients</button>
+        <div class="sub-panel active" id="sr-am-recalc">
+          <div class="card">
+            <h3>Calculate Account Manager Ranking</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-am-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-am-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-primary" onclick="loadStackRanking('account_manager')">Calculate</button>
+              <button class="btn btn-secondary" onclick="calculateWithPriorWeek('account_manager')" title="Calculates the prior week first (for baseline), then the selected week so rank changes appear">Calculate with Prior Week</button>
+            </div>
+            <div id="sr-am-results"></div>
           </div>
-          <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <input type="email" id="sr-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
-            <button class="btn btn-secondary" onclick="sendStackRankingTestEmail()" id="sr-send-test-btn">Send Test</button>
+        </div>
+        <div class="sub-panel" id="sr-am-preview">
+          <div class="card">
+            <h3>Preview Account Manager Report</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-am-prev-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-am-prev-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-secondary" onclick="previewStackRankingHtml('account_manager')">Preview HTML</button>
+            </div>
+            <iframe id="sr-am-preview-frame" class="preview-frame" style="margin-top:1rem;"></iframe>
+          </div>
+        </div>
+        <div class="sub-panel" id="sr-am-email">
+          <div class="card">
+            <h3>Send Account Manager Ranking Email</h3>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+              <button class="btn btn-primary" onclick="sendStackRankingEmail('account_manager')">Send to All Recipients</button>
+            </div>
+            <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="email" id="sr-am-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+              <button class="btn btn-secondary" onclick="sendStackRankingTestEmail('account_manager')" id="sr-am-send-test-btn">Send Test</button>
+            </div>
           </div>
         </div>
       </div>
@@ -796,8 +858,12 @@ app.http('adminPortal', {
             <select id="setting-key" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;">
               <option value="HOURS_REPORT_FROM_EMAIL">HOURS_REPORT_FROM_EMAIL</option>
               <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
-              <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL</option>
-              <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL</option>
+              <option value="RECRUITER_RANKING_FROM_EMAIL">RECRUITER_RANKING_FROM_EMAIL</option>
+              <option value="RECRUITER_RANKING_TO_EMAIL">RECRUITER_RANKING_TO_EMAIL</option>
+              <option value="AM_RANKING_FROM_EMAIL">AM_RANKING_FROM_EMAIL</option>
+              <option value="AM_RANKING_TO_EMAIL">AM_RANKING_TO_EMAIL</option>
+              <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL (fallback)</option>
+              <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL (fallback)</option>
               <option value="SYMPLR_BURDEN">SYMPLR_BURDEN</option>
               <option value="BULLHORN_BURDEN">BULLHORN_BURDEN</option>
             </select>
@@ -914,7 +980,7 @@ app.http('adminPortal', {
         document.getElementById(tab.dataset.tab + '-panel').classList.add('active');
 
         if (tab.dataset.tab === 'stack-ranking') {
-          getStackRankingDates();
+          getStackRankingDates('recruiter');
         }
         if (tab.dataset.tab === 'financials') {
           getFinancialsDates();
@@ -935,15 +1001,26 @@ app.http('adminPortal', {
         var group = stab.dataset.group;
         document.querySelectorAll('.sub-tab[data-group="' + group + '"]').forEach(function(t) { t.classList.remove('active'); });
         stab.classList.add('active');
-        // Hide all sub-panels in this group's parent panel
-        var parentPanel = stab.closest('.panel');
+        // Hide all sub-panels in this group's container (role-panel or panel)
+        var parentPanel = stab.closest('.role-panel') || stab.closest('.panel');
         parentPanel.querySelectorAll('.sub-panel').forEach(function(p) { p.classList.remove('active'); });
         document.getElementById(stab.dataset.subtab).classList.add('active');
 
         // Sync dates when switching SR sub-tabs
-        if (group === 'sr') {
-          syncSRDates();
-        }
+        if (group === 'sr-rec') { syncSRDates('recruiter'); }
+        else if (group === 'sr-am') { syncSRDates('account_manager'); }
+      });
+    });
+
+    // Role tab switching (Stack Ranking: Recruiters / Account Managers)
+    document.querySelectorAll('.role-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        document.querySelectorAll('.role-tab').forEach(function(t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        document.querySelectorAll('.role-panel').forEach(function(p) { p.classList.remove('active'); });
+        var panelId = tab.dataset.role === 'account_manager' ? 'sr-am-panel' : 'sr-recruiter-panel';
+        document.getElementById(panelId).classList.add('active');
+        getStackRankingDates(tab.dataset.role);
       });
     });
 
@@ -1112,6 +1189,8 @@ app.http('adminPortal', {
 
     // =========== STACK RANKING ===========
 
+    function srPrefix(type) { return type === 'account_manager' ? 'sr-am' : 'sr-rec'; }
+
     function getDefaultSRDates() {
       var now = new Date();
       var dayOfWeek = now.getDay();
@@ -1124,43 +1203,42 @@ app.http('adminPortal', {
       return { weekStart: targetSun.toISOString().split('T')[0], weekEnd: targetSat.toISOString().split('T')[0] };
     }
 
-    function getStackRankingDates() {
-      var weekStart = document.getElementById('sr-week-start').value;
-      var weekEnd = document.getElementById('sr-week-end').value;
+    function getStackRankingDates(type) {
+      var p = srPrefix(type);
+      var weekStart = document.getElementById(p + '-week-start').value;
+      var weekEnd = document.getElementById(p + '-week-end').value;
       if (!weekStart || !weekEnd) {
         var defaults = getDefaultSRDates();
         weekStart = defaults.weekStart;
         weekEnd = defaults.weekEnd;
-        document.getElementById('sr-week-start').value = weekStart;
-        document.getElementById('sr-week-end').value = weekEnd;
-        document.getElementById('sr-prev-week-start').value = weekStart;
-        document.getElementById('sr-prev-week-end').value = weekEnd;
+        document.getElementById(p + '-week-start').value = weekStart;
+        document.getElementById(p + '-week-end').value = weekEnd;
+        document.getElementById(p + '-prev-start').value = weekStart;
+        document.getElementById(p + '-prev-end').value = weekEnd;
       }
       return { weekStart: weekStart, weekEnd: weekEnd };
     }
 
-    function syncSRDates() {
-      // Sync dates across all SR sub-tab date pickers
-      var recalcStart = document.getElementById('sr-week-start').value;
-      var recalcEnd = document.getElementById('sr-week-end').value;
-      var prevStart = document.getElementById('sr-prev-week-start').value;
-      var prevEnd = document.getElementById('sr-prev-week-end').value;
-      // Use whichever has values; prefer recalc
+    function syncSRDates(type) {
+      var p = srPrefix(type);
+      var recalcStart = document.getElementById(p + '-week-start').value;
+      var recalcEnd = document.getElementById(p + '-week-end').value;
+      var prevStart = document.getElementById(p + '-prev-start').value;
+      var prevEnd = document.getElementById(p + '-prev-end').value;
       if (recalcStart && recalcEnd) {
-        document.getElementById('sr-prev-week-start').value = recalcStart;
-        document.getElementById('sr-prev-week-end').value = recalcEnd;
+        document.getElementById(p + '-prev-start').value = recalcStart;
+        document.getElementById(p + '-prev-end').value = recalcEnd;
       } else if (prevStart && prevEnd) {
-        document.getElementById('sr-week-start').value = prevStart;
-        document.getElementById('sr-week-end').value = prevEnd;
+        document.getElementById(p + '-week-start').value = prevStart;
+        document.getElementById(p + '-week-end').value = prevEnd;
       }
     }
 
-    async function calculateWithPriorWeek() {
-      var dates = getStackRankingDates();
-      var results = document.getElementById('sr-results');
-      document.getElementById('sr-preview-frame').style.display = 'none';
+    async function calculateWithPriorWeek(type) {
+      var dates = getStackRankingDates(type);
+      var p = srPrefix(type);
+      var results = document.getElementById(p + '-results');
 
-      // Calculate the prior week dates (7 days before selected range)
       var priorStart = new Date(dates.weekStart + 'T00:00:00');
       priorStart.setDate(priorStart.getDate() - 7);
       var priorEnd = new Date(priorStart);
@@ -1168,10 +1246,9 @@ app.http('adminPortal', {
       var priorStartStr = priorStart.toISOString().split('T')[0];
       var priorEndStr = priorEnd.toISOString().split('T')[0];
 
-      // Step 1: Calculate prior week (baseline)
       results.innerHTML = '<p>Step 1/2: Calculating prior week (' + priorStartStr + ' to ' + priorEndStr + ')...</p>';
       try {
-        var res1 = await fetch(API_BASE + '/stack-ranking?weekStart=' + priorStartStr + '&weekEnd=' + priorEndStr);
+        var res1 = await fetch(API_BASE + '/stack-ranking?weekStart=' + priorStartStr + '&weekEnd=' + priorEndStr + '&type=' + type);
         var data1 = await res1.json();
         if (data1.error) { results.innerHTML = '<p class="alert alert-error">Prior week failed: ' + data1.error + '</p>'; return; }
         results.innerHTML = '<p>Step 1/2 complete: Prior week calculated (' + (data1.rows || []).length + ' ranked). Now calculating selected week...</p>';
@@ -1180,18 +1257,18 @@ app.http('adminPortal', {
         return;
       }
 
-      // Step 2: Calculate selected week (will now have prior week data for rank changes)
-      await loadStackRanking();
+      await loadStackRanking(type);
     }
 
-    async function loadStackRanking() {
-      var dates = getStackRankingDates();
-      var results = document.getElementById('sr-results');
-      document.getElementById('sr-preview-frame').style.display = 'none';
+    async function loadStackRanking(type) {
+      var dates = getStackRankingDates(type);
+      var p = srPrefix(type);
+      var results = document.getElementById(p + '-results');
       results.innerHTML = '<p>Calculating stack ranking...</p>';
+      var nameCol = type === 'account_manager' ? 'Account Manager' : 'Recruiter';
 
       try {
-        var res = await fetch(API_BASE + '/stack-ranking?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd);
+        var res = await fetch(API_BASE + '/stack-ranking?weekStart=' + dates.weekStart + '&weekEnd=' + dates.weekEnd + '&type=' + type);
         var data = await res.json();
         if (data.error) { results.innerHTML = '<p class="alert alert-error">' + data.error + '</p>'; return; }
 
@@ -1218,7 +1295,7 @@ app.http('adminPortal', {
           '<col style="width:6%"><col style="width:14%"><col style="width:8%">' +
           '<col style="width:14%"><col style="width:8%"><col style="width:7%">' +
           '</colgroup>';
-        html += '<thead><tr><th>Rank</th><th>Name</th><th>Division</th>' +
+        html += '<thead><tr><th>Rank</th><th>' + nameCol + '</th><th>Division</th>' +
           '<th style="' + hdrRight + '">HC</th><th style="' + hdrRight + '">GM$</th>' +
           '<th style="' + hdrRight + '">GP%</th><th style="' + hdrRight + '">Revenue</th>' +
           '<th style="' + hdrCenter + '">Change</th><th style="' + hdrCenter + '">Prior</th></tr></thead><tbody>';
@@ -1242,47 +1319,50 @@ app.http('adminPortal', {
       }
     }
 
-    function previewStackRankingHtml() {
-      var weekStart = document.getElementById('sr-prev-week-start').value;
-      var weekEnd = document.getElementById('sr-prev-week-end').value;
+    function previewStackRankingHtml(type) {
+      var p = srPrefix(type);
+      var weekStart = document.getElementById(p + '-prev-start').value;
+      var weekEnd = document.getElementById(p + '-prev-end').value;
       if (!weekStart || !weekEnd) {
         var defaults = getDefaultSRDates();
         weekStart = defaults.weekStart;
         weekEnd = defaults.weekEnd;
-        document.getElementById('sr-prev-week-start').value = weekStart;
-        document.getElementById('sr-prev-week-end').value = weekEnd;
+        document.getElementById(p + '-prev-start').value = weekStart;
+        document.getElementById(p + '-prev-end').value = weekEnd;
       }
-      var frame = document.getElementById('sr-preview-frame');
-      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + weekStart + '&weekEnd=' + weekEnd;
+      var frame = document.getElementById(p + '-preview-frame');
+      frame.src = API_BASE + '/stack-ranking/html?weekStart=' + weekStart + '&weekEnd=' + weekEnd + '&type=' + type;
     }
 
-    async function sendStackRankingEmail() {
-      if (!confirm('Send the Stack Ranking email to ALL configured recipients?')) return;
-      var dates = getStackRankingDates();
+    async function sendStackRankingEmail(type) {
+      var typeLabel = type === 'account_manager' ? 'Account Manager' : 'Recruiter';
+      if (!confirm('Send the ' + typeLabel + ' Stack Ranking email to ALL configured recipients?')) return;
+      var dates = getStackRankingDates(type);
       try {
         var res = await fetch(API_BASE + '/stack-ranking/send-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd })
+          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd, type: type })
         });
         var data = await res.json();
-        if (res.ok) { showAlert('Stack ranking email sent to ' + data.recipientCount + ' recipients!'); }
+        if (res.ok) { showAlert(typeLabel + ' ranking email sent to ' + data.recipientCount + ' recipients!'); }
         else { showAlert('Error: ' + (data.error || 'Unknown error'), 'error'); }
       } catch (err) { showAlert('Error: ' + err.message, 'error'); }
     }
 
-    async function sendStackRankingTestEmail() {
-      var recipient = document.getElementById('sr-test-email').value;
+    async function sendStackRankingTestEmail(type) {
+      var p = srPrefix(type);
+      var recipient = document.getElementById(p + '-test-email').value;
       if (!recipient) { showAlert('Please enter a recipient email', 'error'); return; }
-      var btn = document.getElementById('sr-send-test-btn');
+      var btn = document.getElementById(p + '-send-test-btn');
       btn.textContent = 'Sending...';
       btn.disabled = true;
-      var dates = getStackRankingDates();
+      var dates = getStackRankingDates(type);
       try {
         var res = await fetch(API_BASE + '/stack-ranking/send-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd, recipient: recipient })
+          body: JSON.stringify({ weekStart: dates.weekStart, weekEnd: dates.weekEnd, recipient: recipient, type: type })
         });
         var data = await res.json();
         if (res.ok) { showAlert('Test email sent to ' + recipient); }
@@ -2091,8 +2171,13 @@ app.http('getStackRanking', {
         weekEnd = boundaries.weekEnd;
       }
 
-      const { rows, totals, _debug } = await stackRankingService.calculateRanking(weekStart, weekEnd);
-      return { jsonBody: { weekStart, weekEnd, rows, totals, _debug } };
+      const rankingType = (request.query.get('type') || 'recruiter') as RankingType;
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      }
+
+      const { rows, totals, _debug } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
+      return { jsonBody: { weekStart, weekEnd, rankingType, rows, totals, _debug } };
     } catch (error) {
       context.error('Error getting stack ranking:', error);
       const msg = error instanceof Error ? error.message : String(error);
@@ -2122,8 +2207,13 @@ app.http('getStackRankingHtml', {
         weekEnd = boundaries.weekEnd;
       }
 
-      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
-      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+      const rankingType = (request.query.get('type') || 'recruiter') as RankingType;
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      }
+
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
+      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd, rankingType);
 
       return {
         headers: { 'Content-Type': 'text/html' },
@@ -2146,6 +2236,10 @@ app.http('sendStackRankingEmail', {
       const weekStartParam = body?.weekStart;
       const weekEndParam = body?.weekEnd;
       const testRecipient = body?.recipient;
+      const rankingType = (body?.type || 'recruiter') as RankingType;
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      }
 
       let weekStart: string;
       let weekEnd: string;
@@ -2159,22 +2253,34 @@ app.http('sendStackRankingEmail', {
         weekEnd = boundaries.weekEnd;
       }
 
-      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
-      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
+      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd, rankingType);
+
+      // Use type-specific config keys with fallback to legacy keys
+      const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
+      const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
 
       let recipients: string[];
       if (testRecipient) {
         recipients = [testRecipient];
       } else {
-        recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
+        recipients = await configService.getList(toKey);
+        // Backward compat: fall back to legacy key for recruiters
+        if (recipients.length === 0 && rankingType === 'recruiter') {
+          recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
+        }
       }
 
       if (recipients.length === 0) {
-        return { status: 400, jsonBody: { error: 'No recipients configured. Set STACK_RANKING_TO_EMAIL in Settings or provide a recipient in the request body.' } };
+        return { status: 400, jsonBody: { error: `No recipients configured. Set ${toKey} in Settings or provide a recipient in the request body.` } };
       }
 
-      const fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
-      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html, fromAddress);
+      let fromAddress = await configService.get(fromKey, '');
+      if (!fromAddress) {
+        fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+      }
+      const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : 'Recruiter';
+      await emailService.sendEmail(recipients, `GHR ${typeLabel} Stack Ranking - Week of ${weekStart}`, html, fromAddress);
 
       return {
         jsonBody: {

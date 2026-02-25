@@ -18,6 +18,7 @@ import {
   CreateUserConfigRequest,
   UpdateUserConfigRequest,
   AppConfig,
+  RankingType,
 } from '../types';
 
 class DatabaseService {
@@ -990,7 +991,7 @@ class DatabaseService {
       try {
         const bhPool = await this.getBullhornPool();
         const result = await bhPool.request().query(
-          `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND isEnabled = 1 AND name IS NOT NULL`
+          `SELECT name FROM dbo.CorporationDepartment WHERE isDeleted = 0 AND enabled = 1 AND name IS NOT NULL`
         );
         for (const row of result.recordset) {
           if (row.name && row.name.trim()) bullhornDepts.push(row.name.trim());
@@ -1119,7 +1120,7 @@ class DatabaseService {
       .query('DELETE FROM dbo.division_ats_mapping WHERE division_id = @divisionId');
   }
 
-  async getSymplrPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
+  async getSymplrPlacementData(weekStart: string, weekEnd: string, rankingType?: RankingType): Promise<PlacementData[]> {
     const pool = await this.getCtmsyncPool();
 
     // Get recruiter-to-division mapping from hours_report DB using symplr_user_id
@@ -1135,22 +1136,29 @@ class DatabaseService {
     }
 
     // Uses vw_FilledOrderFinancials view which pre-computes non-taxable pay
-    // Credits both staffing specialist and recruiter on the temp profile
+    // Role mapping: staffingspecialist = Account Manager, recruiter = Recruiter
+    // When rankingType is undefined (financials), credits both
+    const cteParts: string[] = [];
+    if (!rankingType || rankingType === 'account_manager') {
+      cteParts.push(`
+          SELECT staffingspecialist AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          FROM dbo.vw_FilledOrderFinancials
+          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+            AND staffingspecialist IS NOT NULL`);
+    }
+    if (!rankingType || rankingType === 'recruiter') {
+      cteParts.push(`
+          SELECT recruiter AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          FROM dbo.vw_FilledOrderFinancials
+          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
+            AND recruiter IS NOT NULL AND recruiter != staffingspecialist`);
+    }
+
     const result = await pool.request()
       .input('weekStart', sql.Date, weekStart)
       .input('weekEnd', sql.Date, weekEnd)
       .query(`
-        WITH CreditedUsers AS (
-          SELECT staffingspecialist AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
-          FROM dbo.vw_FilledOrderFinancials
-          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
-            AND staffingspecialist IS NOT NULL
-          UNION ALL
-          SELECT recruiter AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
-          FROM dbo.vw_FilledOrderFinancials
-          WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
-            AND recruiter IS NOT NULL AND recruiter != staffingspecialist
-        )
+        WITH CreditedUsers AS (${cteParts.join('\n          UNION ALL')})
         SELECT
           u.userid AS recruiter_user_id,
           u.firstname + ' ' + u.lastname AS recruiter_name,
@@ -1178,7 +1186,7 @@ class DatabaseService {
     });
   }
 
-  async getBullhornPlacementData(weekStart: string, weekEnd: string): Promise<PlacementData[]> {
+  async getBullhornPlacementData(weekStart: string, weekEnd: string, rankingType?: RankingType): Promise<PlacementData[]> {
     if (!this.bullhornConfig) {
       console.warn('Bullhorn connection not configured, skipping');
       return [];
@@ -1202,6 +1210,10 @@ class DatabaseService {
       // Query actual bill/pay from BillableCharge and PayableCharge tables
       // Credit assigned via PlacementCommission (role: Sales=AM, Recruiting=Recruiter)
       // Each person's share = total * commissionPercentage (stored as decimal, e.g. 0.5 = 50%)
+      let roleFilter = '';
+      if (rankingType === 'recruiter') roleFilter = "AND pcm.role = 'Recruiting'";
+      else if (rankingType === 'account_manager') roleFilter = "AND pcm.role = 'Sales'";
+
       const result = await pool.request()
         .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
@@ -1216,15 +1228,16 @@ class DatabaseService {
             LEFT JOIN (
               SELECT placementID, SUM(subtotal) AS bill_subtotal
               FROM dbo.BillableCharge
+              WHERE CAST(periodEndDate AS DATE) BETWEEN @weekStart AND @weekEnd
               GROUP BY placementID
             ) bc ON p.placementID = bc.placementID
             LEFT JOIN (
               SELECT placementID, SUM(subtotal) AS pay_subtotal
               FROM dbo.PayableCharge
+              WHERE CAST(periodEndDate AS DATE) BETWEEN @weekStart AND @weekEnd
               GROUP BY placementID
             ) pc ON p.placementID = pc.placementID
             WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
-              AND CAST(p.dateBegin AS DATE) BETWEEN @weekStart AND @weekEnd
               AND (bc.bill_subtotal IS NOT NULL OR pc.pay_subtotal IS NOT NULL)
           )
           SELECT
@@ -1237,6 +1250,7 @@ class DatabaseService {
           INNER JOIN dbo.PlacementCommission pcm
             ON pch.placementID = pcm.placementID
             AND ISNULL(pcm.isDeleted, 0) = 0
+            ${roleFilter}
           INNER JOIN dbo.CorporateUser cu ON pcm.userID = cu.corporateUserID
           GROUP BY pcm.userID, cu.firstName, cu.lastName
         `);
@@ -1265,13 +1279,14 @@ class DatabaseService {
     }
   }
 
-  async saveStackRankingSnapshot(weekStart: string, rows: StackRankingRow[]): Promise<void> {
+  async saveStackRankingSnapshot(weekStart: string, rows: StackRankingRow[], rankingType: RankingType = 'recruiter'): Promise<void> {
     const pool = await this.getPool();
 
-    // Delete existing snapshot for this week (idempotent re-runs)
+    // Delete existing snapshot for this week + type (idempotent re-runs)
     await pool.request()
       .input('weekStart', sql.Date, weekStart)
-      .query('DELETE FROM dbo.stack_ranking_snapshots WHERE week_start = @weekStart');
+      .input('rankingType', sql.VarChar(20), rankingType)
+      .query('DELETE FROM dbo.stack_ranking_snapshots WHERE week_start = @weekStart AND ranking_type = @rankingType');
 
     // Insert new snapshot rows in batches
     const batchSize = 10;
@@ -1280,6 +1295,7 @@ class DatabaseService {
       await Promise.all(batch.map(row =>
         pool.request()
           .input('weekStart', sql.Date, weekStart)
+          .input('rankingType', sql.VarChar(20), rankingType)
           .input('userId', sql.Int, row.recruiter_user_id)
           .input('name', sql.NVarChar(200), row.recruiter_name)
           .input('division', sql.NVarChar(100), row.division_name)
@@ -1290,23 +1306,24 @@ class DatabaseService {
           .input('revenue', sql.Decimal(12, 2), row.revenue)
           .query(`
             INSERT INTO dbo.stack_ranking_snapshots
-              (week_start, recruiter_user_id, recruiter_name, division_name,
+              (week_start, ranking_type, recruiter_user_id, recruiter_name, division_name,
                rank, head_count, gross_margin_dollars, gross_profit_pct, revenue)
             VALUES
-              (@weekStart, @userId, @name, @division,
+              (@weekStart, @rankingType, @userId, @name, @division,
                @rank, @hc, @gm, @gp, @revenue)
           `)
       ));
     }
   }
 
-  async getPriorWeekSnapshot(priorWeekStart: string): Promise<StackRankingSnapshot[]> {
+  async getPriorWeekSnapshot(priorWeekStart: string, rankingType: RankingType = 'recruiter'): Promise<StackRankingSnapshot[]> {
     const pool = await this.getPool();
     const result = await pool.request()
       .input('weekStart', sql.Date, priorWeekStart)
+      .input('rankingType', sql.VarChar(20), rankingType)
       .query(`
         SELECT * FROM dbo.stack_ranking_snapshots
-        WHERE week_start = @weekStart
+        WHERE week_start = @weekStart AND ranking_type = @rankingType
         ORDER BY rank
       `);
     return result.recordset;

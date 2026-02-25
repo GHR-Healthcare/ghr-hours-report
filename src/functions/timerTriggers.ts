@@ -4,6 +4,7 @@ import { emailService } from '../services/email';
 import { stackRankingService } from '../services/stackRanking';
 import { configService } from '../services/config';
 import { userSyncService } from '../services/userSync';
+import { RankingType } from '../types';
 
 // Helper function to get week boundaries
 function getWeekInfo(forDate?: Date) {
@@ -270,23 +271,37 @@ app.timer('weeklyStackRanking', {
 
     try {
       const { weekStart, weekEnd } = stackRankingService.getLastWeekBoundaries();
-      context.log(`Calculating stack ranking for ${weekStart} to ${weekEnd}`);
 
-      const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd);
-      context.log(`Stack ranking calculated: ${rows.length} recruiters ranked`);
+      for (const rankingType of ['recruiter', 'account_manager'] as RankingType[]) {
+        const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : 'Recruiter';
+        context.log(`Calculating ${typeLabel} stack ranking for ${weekStart} to ${weekEnd}`);
 
-      const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd);
+        const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
+        context.log(`${typeLabel} ranking: ${rows.length} users ranked`);
 
-      const recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
+        const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd, rankingType);
 
-      if (recipients.length === 0) {
-        context.warn('No stack ranking recipients configured. Set STACK_RANKING_TO_EMAIL in Settings.');
-        return;
+        const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
+        const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
+
+        let recipients = await configService.getList(toKey);
+        if (recipients.length === 0 && rankingType === 'recruiter') {
+          recipients = await configService.getList('STACK_RANKING_TO_EMAIL');
+        }
+
+        if (recipients.length === 0) {
+          context.warn(`No ${typeLabel} ranking recipients configured. Set ${toKey} in Settings.`);
+          continue;
+        }
+
+        let fromAddress = await configService.get(fromKey, '');
+        if (!fromAddress) {
+          fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
+        }
+
+        await emailService.sendEmail(recipients, `GHR ${typeLabel} Stack Ranking - Week of ${weekStart}`, html, fromAddress);
+        context.log(`${typeLabel} ranking email sent to ${recipients.length} recipients`);
       }
-
-      const fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
-      await emailService.sendEmail(recipients, `GHR Stack Ranking - Week of ${weekStart}`, html, fromAddress);
-      context.log(`Stack ranking email sent to ${recipients.length} recipients`);
     } catch (error) {
       context.error('Error in weekly stack ranking:', error);
       throw error;

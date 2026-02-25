@@ -5,6 +5,7 @@ import {
   FinancialRow,
   FinancialTotals,
   PlacementData,
+  RankingType,
   StackRankingRow,
   StackRankingTotals,
   UserConfig,
@@ -19,14 +20,15 @@ class StackRankingService {
    */
   async calculateRanking(
     weekStart: string,
-    weekEnd: string
+    weekEnd: string,
+    rankingType: RankingType = 'recruiter'
   ): Promise<{ rows: StackRankingRow[]; totals: StackRankingTotals; _debug?: Record<string, unknown> }> {
     // 1. Query both ATS systems — catch Bullhorn errors separately so Symplr still works
     let bullhornError: string | null = null;
-    const symplrData = await databaseService.getSymplrPlacementData(weekStart, weekEnd);
+    const symplrData = await databaseService.getSymplrPlacementData(weekStart, weekEnd, rankingType);
     let bullhornData: PlacementData[] = [];
     try {
-      bullhornData = await databaseService.getBullhornPlacementData(weekStart, weekEnd);
+      bullhornData = await databaseService.getBullhornPlacementData(weekStart, weekEnd, rankingType);
     } catch (err) {
       bullhornError = err instanceof Error ? err.message : String(err);
       console.error('Bullhorn query failed in calculateRanking:', bullhornError);
@@ -83,6 +85,7 @@ class StackRankingService {
     }
 
     const _debug: Record<string, unknown> = {
+      rankingType,
       symplrQueryRows: symplrData.length,
       bullhornQueryRows: bullhornData.length,
       bullhornError,
@@ -132,7 +135,7 @@ class StackRankingService {
 
     // 6. Get prior week snapshot for change calculation
     const priorWeekStart = this.getPriorWeekStart(weekStart);
-    const priorSnapshot = await databaseService.getPriorWeekSnapshot(priorWeekStart);
+    const priorSnapshot = await databaseService.getPriorWeekSnapshot(priorWeekStart, rankingType);
     const priorRankMap = new Map(
       priorSnapshot.map(s => [s.recruiter_user_id, s.rank])
     );
@@ -164,7 +167,7 @@ class StackRankingService {
         : 0;
 
     // 9. Save this week's snapshot
-    await databaseService.saveStackRankingSnapshot(weekStart, rows);
+    await databaseService.saveStackRankingSnapshot(weekStart, rows, rankingType);
 
     return { rows, totals, _debug };
   }

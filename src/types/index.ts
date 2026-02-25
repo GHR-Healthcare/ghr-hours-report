@@ -192,6 +192,7 @@ export interface UpdateUserConfigRequest {
 // Stack Ranking Types
 
 export type AtsSystem = 'symplr' | 'bullhorn';
+export type RankingType = 'recruiter' | 'account_manager';
 
 export interface DivisionAtsMapping {
   division_id: number;
@@ -248,6 +249,7 @@ export interface StackRankingRow {
 export interface StackRankingSnapshot {
   snapshot_id: number;
   week_start: string;
+  ranking_type: RankingType;
   recruiter_user_id: number;
   recruiter_name: string;
   division_name: string;

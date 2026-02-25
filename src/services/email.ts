@@ -1,4 +1,4 @@
-import { ReportRow, WeeklyTotals, StackRankingRow, StackRankingTotals } from '../types';
+import { ReportRow, WeeklyTotals, StackRankingRow, StackRankingTotals, RankingType } from '../types';
 
 class EmailService {
   private tenantId: string;
@@ -347,7 +347,8 @@ class EmailService {
     rows: StackRankingRow[],
     totals: StackRankingTotals,
     weekStart: string,
-    weekEnd: string
+    weekEnd: string,
+    rankingType: RankingType = 'recruiter'
   ): string {
     const fmtDate = (d: string) => {
       const [y, m, day] = d.split('-');
@@ -376,12 +377,12 @@ class EmailService {
         </style>
       </head>
       <body>
-        <h1>GHR ALL COMPANY PERFORMANCE RANKING</h1>
+        <h1>GHR ${rankingType === 'account_manager' ? 'ACCOUNT MANAGER' : 'RECRUITER'} PERFORMANCE RANKING</h1>
         <h2 style="color: #666; font-size: 14px;">Week of ${fmtDate(weekStart)} - ${fmtDate(weekEnd)}</h2>
         <table>
           <tr>
             <th style="${headerStyle}">Rank</th>
-            <th style="${headerStyle}">Recruiter Name</th>
+            <th style="${headerStyle}">${rankingType === 'account_manager' ? 'Account Manager' : 'Recruiter Name'}</th>
             <th style="${headerStyle}">Division</th>
             <th style="${headerStyle}">HC</th>
             <th style="${headerStyle}">GM$</th>
