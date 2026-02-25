@@ -1238,7 +1238,7 @@ class DatabaseService {
           INNER JOIN dbo.PlacementCommission pcm
             ON pch.placementID = pcm.placementID
             AND ISNULL(pcm.isDeleted, 0) = 0
-          INNER JOIN dbo.CorporateUser cu ON pcm.userID = cu.userID
+          INNER JOIN dbo.CorporateUser cu ON pcm.userID = cu.corporateUserID
           GROUP BY pcm.userID, cu.firstName, cu.lastName
         `);
 
