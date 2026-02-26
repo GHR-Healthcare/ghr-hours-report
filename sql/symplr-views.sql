@@ -26,6 +26,8 @@ SELECT
   pt.recruiter,
   ISNULL(o.totalbillamount, 0) AS total_bill,
   ISNULL(o.totalpayamount, 0) AS total_pay,
+  ISNULL(o.totalbillhours, 0) AS total_bill_hours,
+  ISNULL(o.totalpayhours, 0) AS total_pay_hours,
   -- Non-taxable pay: sum of extras where extra_pb = 'pay' AND extratax_yn != 'yes'
   CASE WHEN pm1.extra_pb = 'pay' AND pm1.extratax_yn != 'yes' THEN ISNULL(o.extra, 0) ELSE 0 END
   + CASE WHEN pm2.extra_pb = 'pay' AND pm2.extratax_yn != 'yes' THEN ISNULL(o.extra2, 0) ELSE 0 END

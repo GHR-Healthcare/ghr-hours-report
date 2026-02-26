@@ -272,8 +272,8 @@ app.timer('weeklyStackRanking', {
     try {
       const { weekStart, weekEnd } = stackRankingService.getLastWeekBoundaries();
 
-      for (const rankingType of ['recruiter', 'account_manager'] as RankingType[]) {
-        const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : 'Recruiter';
+      for (const rankingType of ['recruiter', 'account_manager', 'sales'] as RankingType[]) {
+        const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : rankingType === 'sales' ? 'Sales' : 'Recruiter';
         context.log(`Calculating ${typeLabel} stack ranking for ${weekStart} to ${weekEnd}`);
 
         const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
@@ -281,8 +281,8 @@ app.timer('weeklyStackRanking', {
 
         const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd, rankingType);
 
-        const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
-        const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
+        const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : rankingType === 'sales' ? 'SALES_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
+        const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : rankingType === 'sales' ? 'SALES_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
 
         let recipients = await configService.getList(toKey);
         if (recipients.length === 0 && rankingType === 'recruiter') {

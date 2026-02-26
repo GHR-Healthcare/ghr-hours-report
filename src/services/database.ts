@@ -192,6 +192,10 @@ class DatabaseService {
       updates.push('is_active = @isActive');
       request.input('isActive', sql.Bit, data.is_active);
     }
+    if (data.burden_rate !== undefined) {
+      updates.push('burden_rate = @burdenRate');
+      request.input('burdenRate', sql.Decimal(10, 4), data.burden_rate);
+    }
 
     if (updates.length === 0) return null;
 
@@ -1192,10 +1196,11 @@ class DatabaseService {
   async getSymplrPlacementData(weekStart: string, weekEnd: string, rankingType?: RankingType): Promise<PlacementData[]> {
     const pool = await this.getCtmsyncPool();
 
-    // Get recruiter-to-division mapping from hours_report DB using symplr_user_id
+    // Get recruiter-to-division mapping + division burden rates from hours_report DB
     const symplrMap = await this.getAtsIdToConfigMap('symplr');
     const divisions = await this.getDivisions(false);
     const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
+    const divisionBurdenMap = new Map(divisions.map(d => [d.division_id, d.burden_rate ?? 0]));
     const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
     for (const [atsId, config] of symplrMap) {
       recruiterDivisionMap.set(atsId, {
@@ -1205,19 +1210,19 @@ class DatabaseService {
     }
 
     // Uses vw_FilledOrderFinancials view which pre-computes non-taxable pay
-    // Role mapping: staffingspecialist = Account Manager, recruiter = Recruiter
+    // Role mapping: staffingspecialist = Account Manager / Sales, recruiter = Recruiter
     // When rankingType is undefined (financials), credits both
     const cteParts: string[] = [];
-    if (!rankingType || rankingType === 'account_manager') {
+    if (!rankingType || rankingType === 'account_manager' || rankingType === 'sales') {
       cteParts.push(`
-          SELECT staffingspecialist AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          SELECT staffingspecialist AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay, total_bill_hours, total_pay_hours
           FROM dbo.vw_FilledOrderFinancials
           WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
             AND staffingspecialist IS NOT NULL`);
     }
     if (!rankingType || rankingType === 'recruiter') {
       cteParts.push(`
-          SELECT recruiter AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay
+          SELECT recruiter AS credited_user_id, filledby, total_bill, total_pay, non_taxable_pay, total_bill_hours, total_pay_hours
           FROM dbo.vw_FilledOrderFinancials
           WHERE CAST(shiftstarttime AS DATE) BETWEEN @weekStart AND @weekEnd
             AND recruiter IS NOT NULL AND recruiter != staffingspecialist`);
@@ -1234,7 +1239,9 @@ class DatabaseService {
           COUNT(DISTINCT cu.filledby) AS head_count,
           SUM(cu.total_bill) AS total_bill_amount,
           SUM(cu.total_pay) AS total_pay_amount,
-          SUM(cu.non_taxable_pay) AS non_taxable_pay
+          SUM(cu.non_taxable_pay) AS non_taxable_pay,
+          SUM(cu.total_bill_hours) AS total_bill_hours,
+          SUM(cu.total_pay_hours) AS total_pay_hours
         FROM CreditedUsers cu
         INNER JOIN dbo.users u ON cu.credited_user_id = u.userid
         GROUP BY u.userid, u.firstname, u.lastname
@@ -1242,6 +1249,7 @@ class DatabaseService {
 
     return result.recordset.map((row: any) => {
       const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
+      const divisionBurden = divisionBurdenMap.get(divInfo?.division_id ?? 0) ?? 0;
       return {
         recruiter_user_id: row.recruiter_user_id,
         recruiter_name: row.recruiter_name,
@@ -1249,8 +1257,11 @@ class DatabaseService {
         division_name: divInfo?.division_name || 'Unknown',
         head_count: row.head_count || 0,
         total_bill_amount: row.total_bill_amount || 0,
-        total_pay_amount: row.total_pay_amount || 0,
+        // total_pay from Symplr includes non-taxable; apply burden to taxable portion only
+        total_pay_amount: ((row.total_pay_amount || 0) - (row.non_taxable_pay || 0)) * (1 + divisionBurden) + (row.non_taxable_pay || 0),
         non_taxable_pay: row.non_taxable_pay || 0,
+        total_bill_hours: row.total_bill_hours || 0,
+        total_pay_hours: row.total_pay_hours || 0,
       };
     });
   }
@@ -1264,10 +1275,11 @@ class DatabaseService {
     try {
       const pool = await this.getBullhornPool();
 
-      // Get recruiter-to-division mapping from hours_report DB using bullhorn_user_id
+      // Get recruiter-to-division mapping + division burden rates from hours_report DB
       const bullhornMap = await this.getAtsIdToConfigMap('bullhorn');
       const divisions = await this.getDivisions(false);
       const divisionMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
+      const divisionBurdenMap = new Map(divisions.map(d => [d.division_id, d.burden_rate ?? 0]));
       const recruiterDivisionMap = new Map<number, { division_id: number; division_name: string }>();
       for (const [atsId, config] of bullhornMap) {
         recruiterDivisionMap.set(atsId, {
@@ -1276,67 +1288,125 @@ class DatabaseService {
         });
       }
 
-      // Query actual bill/pay from BillableCharge and PayableCharge tables
-      // Credit assigned via PlacementCommission (role: Sales=AM, Recruiting=Recruiter)
-      // Each person's share = total * commissionPercentage (stored as decimal, e.g. 0.5 = 50%)
+      // PlacementCustomObjectInstance: placementID, text2=role, int2=userID, float1=commission%
+      // customFloat17 on Placement = per-placement burden rate (decimal, e.g. 0.15); NULL = use division fallback
       let roleFilter = '';
-      if (rankingType === 'recruiter') roleFilter = "AND pcm.role = 'Recruiting'";
-      else if (rankingType === 'account_manager') roleFilter = "AND pcm.role = 'Sales'";
+      if (rankingType === 'recruiter') roleFilter = "AND pco.text2 = 'Recruiter'";
+      else if (rankingType === 'account_manager' || rankingType === 'sales') roleFilter = "AND pco.text2 IN ('Account Manager', 'Sales Rep')";
 
+      // Bill from BillMasterTransaction → BillMaster → BillableCharge (periodEndDate = weekEnd+1)
+      // Taxable pay from PayMasterTransaction (EarnCode.customText1='Yes') → PayMaster → PayableCharge
+      // Non-taxable pay from PayMasterTransaction (EarnCode.customText1='No') → PayMaster → PayableCharge
+      // NULL earnCode rows excluded (Bullhorn-internal burden charges — we apply our own burden_rate)
       const result = await pool.request()
-        .input('weekStart', sql.Date, weekStart)
         .input('weekEnd', sql.Date, weekEnd)
         .query(`
-          WITH PlacementCharges AS (
-            SELECT
-              p.placementID,
-              p.candidateID,
-              ISNULL(bc.bill_subtotal, 0) AS total_bill,
-              ISNULL(pc.pay_subtotal, 0) AS total_pay
-            FROM dbo.Placement p
-            LEFT JOIN (
-              SELECT placementID, SUM(subtotal) AS bill_subtotal
-              FROM dbo.BillableCharge
-              WHERE CAST(periodEndDate AS DATE) BETWEEN @weekStart AND @weekEnd
-              GROUP BY placementID
-            ) bc ON p.placementID = bc.placementID
-            LEFT JOIN (
-              SELECT placementID, SUM(subtotal) AS pay_subtotal
-              FROM dbo.PayableCharge
-              WHERE CAST(periodEndDate AS DATE) BETWEEN @weekStart AND @weekEnd
-              GROUP BY placementID
-            ) pc ON p.placementID = pc.placementID
-            WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
-              AND (bc.bill_subtotal IS NOT NULL OR pc.pay_subtotal IS NOT NULL)
+          WITH BillData AS (
+            SELECT bc.placementID, bc.candidateID,
+              SUM(bmt.amount) AS total_bill,
+              SUM(bmt.quantity) AS total_hours
+            FROM dbo.BillMasterTransaction bmt
+            INNER JOIN dbo.BillMaster bm ON bmt.billMasterID = bm.billMasterID
+            INNER JOIN dbo.BillableCharge bc ON bm.billableChargeID = bc.billableChargeID
+            WHERE bc.periodEndDate = DATEADD(day, 1, @weekEnd)
+              AND ISNULL(bmt.isDeleted, 0) = 0
+              AND ISNULL(bm.isDeleted, 0) = 0
+            GROUP BY bc.placementID, bc.candidateID
+          ),
+          TaxablePayData AS (
+            SELECT pc.placementID, SUM(pmt.amount) AS taxable_pay, SUM(pmt.quantity) AS pay_hours
+            FROM dbo.PayMasterTransaction pmt
+            INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
+            INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
+            INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
+            WHERE pc.periodEndDate = DATEADD(day, 1, @weekEnd)
+              AND ec.customText1 = 'Yes'
+              AND ISNULL(pmt.isDeleted, 0) = 0
+              AND ISNULL(pm.isDeleted, 0) = 0
+            GROUP BY pc.placementID
+          ),
+          NonTaxablePayData AS (
+            SELECT pc.placementID, SUM(pmt.amount) AS non_taxable_pay
+            FROM dbo.PayMasterTransaction pmt
+            INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
+            INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
+            INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
+            WHERE pc.periodEndDate = DATEADD(day, 1, @weekEnd)
+              AND ec.customText1 = 'No'
+              AND ISNULL(pmt.isDeleted, 0) = 0
+              AND ISNULL(pm.isDeleted, 0) = 0
+            GROUP BY pc.placementID
           )
           SELECT
-            pcm.userID AS recruiter_user_id,
+            pco.int2 AS user_id,
             cu.firstName + ' ' + cu.lastName AS recruiter_name,
-            COUNT(DISTINCT pch.candidateID) AS head_count,
-            SUM(pch.total_bill * pcm.commissionPercentage) AS total_bill_amount,
-            SUM(pch.total_pay * pcm.commissionPercentage) AS total_pay_amount
-          FROM PlacementCharges pch
-          INNER JOIN dbo.PlacementCommission pcm
-            ON pch.placementID = pcm.placementID
-            AND ISNULL(pcm.isDeleted, 0) = 0
+            bd.candidateID,
+            p.customFloat17 AS burden_rate,
+            ISNULL(bd.total_bill, 0) AS total_bill,
+            ISNULL(bd.total_hours, 0) AS total_hours,
+            ISNULL(tp.taxable_pay, 0) AS taxable_pay,
+            ISNULL(tp.pay_hours, 0) AS pay_hours,
+            ISNULL(ntp.non_taxable_pay, 0) AS non_taxable_pay,
+            pco.float1 AS commission_pct
+          FROM BillData bd
+          INNER JOIN dbo.Placement p ON bd.placementID = p.placementID
+          LEFT JOIN TaxablePayData tp ON bd.placementID = tp.placementID
+          LEFT JOIN NonTaxablePayData ntp ON bd.placementID = ntp.placementID
+          INNER JOIN dbo.PlacementCustomObjectInstance pco
+            ON bd.placementID = pco.placementID
+            AND ISNULL(pco.isDeleted, 0) = 0
             ${roleFilter}
-          INNER JOIN dbo.CorporateUser cu ON pcm.userID = cu.corporateUserID
-          GROUP BY pcm.userID, cu.firstName, cu.lastName
+          INNER JOIN dbo.CorporateUser cu ON pco.int2 = cu.corporateUserID
+          WHERE p.status NOT IN ('Terminated', 'Cancelled', 'Deleted')
         `);
 
-      return result.recordset.map((row: any) => {
-        const divInfo = recruiterDivisionMap.get(row.recruiter_user_id);
-        return {
-          recruiter_user_id: row.recruiter_user_id,
-          recruiter_name: row.recruiter_name,
-          division_id: divInfo?.division_id || 0,
-          division_name: divInfo?.division_name || 'Unknown',
-          head_count: row.head_count || 0,
-          total_bill_amount: row.total_bill_amount || 0,
-          total_pay_amount: row.total_pay_amount || 0,
-          non_taxable_pay: 0,
-        };
-      });
+      // Aggregate per user, applying per-placement burden with division fallback
+      // burden_rate NULL = use division fallback; 0 = genuinely no burden
+      // total_pay_amount = fully-loaded cost: taxable × (1 + burden) + non_taxable
+      const aggregated = new Map<number, PlacementData>();
+      const candidateSets = new Map<number, Set<number>>();
+
+      for (const row of result.recordset) {
+        const commissionPct = (row.commission_pct || 0) / 100.0;
+        const divInfo = recruiterDivisionMap.get(row.user_id);
+        const divisionBurden = divisionBurdenMap.get(divInfo?.division_id ?? 0) ?? 0;
+        const burdenRate = row.burden_rate !== null ? row.burden_rate : divisionBurden;
+        const hours = (row.total_hours || 0) * commissionPct;
+        const bill = (row.total_bill || 0) * commissionPct;
+        const taxablePay = (row.taxable_pay || 0) * commissionPct;
+        const nonTaxablePay = (row.non_taxable_pay || 0) * commissionPct;
+        const fullyLoadedPay = taxablePay * (1 + burdenRate) + nonTaxablePay;
+
+        if (!aggregated.has(row.user_id)) {
+          aggregated.set(row.user_id, {
+            recruiter_user_id: row.user_id,
+            recruiter_name: row.recruiter_name,
+            division_id: divInfo?.division_id || 0,
+            division_name: divInfo?.division_name || 'Unknown',
+            head_count: 0,
+            total_bill_amount: 0,
+            total_pay_amount: 0,
+            non_taxable_pay: 0,
+            total_bill_hours: 0,
+            total_pay_hours: 0,
+          });
+          candidateSets.set(row.user_id, new Set());
+        }
+
+        const agg = aggregated.get(row.user_id)!;
+        candidateSets.get(row.user_id)!.add(row.candidateID);
+        agg.total_bill_amount += bill;
+        agg.total_pay_amount += fullyLoadedPay;
+        agg.non_taxable_pay += nonTaxablePay;
+        agg.total_bill_hours += hours;
+        agg.total_pay_hours += (row.pay_hours || 0) * commissionPct;
+      }
+
+      for (const [userId, agg] of aggregated) {
+        agg.head_count = candidateSets.get(userId)!.size;
+      }
+
+      return Array.from(aggregated.values());
     } catch (err) {
       console.error('Bullhorn placement query failed:', err);
       // Reset the pool so next attempt tries a fresh connection

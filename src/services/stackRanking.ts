@@ -99,24 +99,22 @@ class StackRankingService {
     };
 
     // 4. Compute GM$, GP%, Revenue (only for on_stack_ranking users)
-    // Fetch burden rates for GM$ calculation
-    const symplrBurden = parseFloat(await configService.get('SYMPLR_BURDEN', '0'));
-    const bullhornBurden = parseFloat(await configService.get('BULLHORN_BURDEN', '0'));
-
+    // total_pay_amount is fully-loaded (burden already applied per-division/placement in data layer)
+    // GM$ = total_bill - total_pay_amount
     const divisions = await databaseService.getDivisions(false);
     const divisionNameMap = new Map(divisions.map(d => [d.division_id, d.division_name]));
     const unranked: Array<Omit<StackRankingRow, 'rank' | 'prior_week_rank' | 'rank_change'>> = [];
 
     for (const [, agg] of configAggMap) {
       if (!agg.config.on_stack_ranking) continue;
+      // Filter by role: each ranking type only includes users with the matching role
+      if (agg.config.role !== rankingType) continue;
       const { config: userConfig } = agg;
 
       const revenue = agg.total_bill_amount;
 
-      // Apply burden: GM$ = total_bill - ((taxable_pay * (1 + burden/100)) + non_taxable_pay)
-      const burden = userConfig.ats_source === 'bullhorn' ? bullhornBurden : symplrBurden;
-      const taxablePay = agg.total_pay_amount - agg.non_taxable_pay;
-      const gmDollars = revenue - ((taxablePay * (1 + burden / 100)) + agg.non_taxable_pay);
+      // total_pay_amount = taxable × (1 + burden) + non_taxable (computed in data layer)
+      const gmDollars = revenue - agg.total_pay_amount;
       const gpPct = revenue > 0 ? (gmDollars / revenue) * 100 : 0;
 
       unranked.push({
@@ -210,6 +208,8 @@ class StackRankingService {
       total_bill_amount: number;
       total_pay_amount: number;
       non_taxable_pay: number;
+      total_bill_hours: number;
+      total_pay_hours: number;
     }>();
 
     const aggregateFin = (d: PlacementData, atsSystem: AtsSystem) => {
@@ -224,6 +224,8 @@ class StackRankingService {
         existing.total_bill_amount += d.total_bill_amount;
         existing.total_pay_amount += d.total_pay_amount;
         existing.non_taxable_pay += d.non_taxable_pay;
+        existing.total_bill_hours += d.total_bill_hours;
+        existing.total_pay_hours += d.total_pay_hours;
       } else {
         aggMap.set(key, {
           recruiter_user_id: config.user_id,
@@ -234,6 +236,8 @@ class StackRankingService {
           total_bill_amount: d.total_bill_amount,
           total_pay_amount: d.total_pay_amount,
           non_taxable_pay: d.non_taxable_pay,
+          total_bill_hours: d.total_bill_hours,
+          total_pay_hours: d.total_pay_hours,
         });
       }
     };
@@ -257,19 +261,17 @@ class StackRankingService {
       aggregatedUsers: aggMap.size,
     };
 
-    // Compute GM$, GP% for each user with burden
-    const symplrBurden = parseFloat(await configService.get('SYMPLR_BURDEN', '0'));
-    const bullhornBurden = parseFloat(await configService.get('BULLHORN_BURDEN', '0'));
-
+    // Compute GM$, GP% for each user
+    // total_pay_amount is fully-loaded (burden already applied per-division/placement in data layer)
+    // GM$ = total_bill - total_pay_amount
     const divs = await databaseService.getDivisions(false);
     const divNameMap = new Map(divs.map(d => [d.division_id, d.division_name]));
     const rows: FinancialRow[] = [];
     for (const [, agg] of aggMap) {
-      const burden = agg.ats_source === 'bullhorn' ? bullhornBurden : symplrBurden;
       const nonTaxable = agg.non_taxable_pay;
       const taxable = agg.total_pay_amount - nonTaxable;
-      // GM$ = total_bill - ((taxable_pay * (1 + burden/100)) + non_taxable_pay)
-      const gmDollars = agg.total_bill_amount - ((taxable * (1 + burden / 100)) + nonTaxable);
+      // total_pay_amount = taxable × (1 + burden) + non_taxable (computed in data layer)
+      const gmDollars = agg.total_bill_amount - agg.total_pay_amount;
       const gpPct = agg.total_bill_amount > 0 ? (gmDollars / agg.total_bill_amount) * 100 : 0;
 
       rows.push({
@@ -277,6 +279,8 @@ class StackRankingService {
         recruiter_name: agg.recruiter_name,
         division_name: divNameMap.get(agg.division_id) || 'Unknown',
         head_count: agg.head_count,
+        total_bill_hours: Math.round(agg.total_bill_hours * 100) / 100,
+        total_pay_hours: Math.round(agg.total_pay_hours * 100) / 100,
         total_bill: Math.round(agg.total_bill_amount * 100) / 100,
         total_pay: Math.round(agg.total_pay_amount * 100) / 100,
         taxable_pay: Math.round(taxable * 100) / 100,
@@ -297,6 +301,8 @@ class StackRankingService {
     const totalGm = Math.round(rows.reduce((sum, r) => sum + r.gross_margin_dollars, 0) * 100) / 100;
     const totals: FinancialTotals = {
       total_head_count: rows.reduce((sum, r) => sum + r.head_count, 0),
+      total_bill_hours: Math.round(rows.reduce((sum, r) => sum + r.total_bill_hours, 0) * 100) / 100,
+      total_pay_hours: Math.round(rows.reduce((sum, r) => sum + r.total_pay_hours, 0) * 100) / 100,
       total_bill: totalBill,
       total_pay: totalPay,
       total_taxable_pay: totalTaxable,

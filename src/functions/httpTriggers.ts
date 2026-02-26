@@ -664,6 +664,7 @@ app.http('adminPortal', {
       <div class="role-tabs">
         <button class="role-tab active" data-role="recruiter">Recruiters</button>
         <button class="role-tab" data-role="account_manager">Account Managers</button>
+        <button class="role-tab" data-role="sales">Sales</button>
       </div>
 
       <!-- Recruiter Role Panel -->
@@ -763,6 +764,55 @@ app.http('adminPortal', {
           </div>
         </div>
       </div>
+
+      <!-- Sales Role Panel -->
+      <div class="role-panel" id="sr-sales-panel">
+        <div class="sub-tabs">
+          <button class="sub-tab active" data-subtab="sr-sales-recalc" data-group="sr-sales">Recalculate</button>
+          <button class="sub-tab" data-subtab="sr-sales-preview" data-group="sr-sales">Preview</button>
+          <button class="sub-tab" data-subtab="sr-sales-email" data-group="sr-sales">Email</button>
+        </div>
+        <div class="sub-panel active" id="sr-sales-recalc">
+          <div class="card">
+            <h3>Calculate Sales Ranking</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-sales-week-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-sales-week-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-primary" onclick="loadStackRanking('sales')">Calculate</button>
+              <button class="btn btn-secondary" onclick="calculateWithPriorWeek('sales')" title="Calculates the prior week first (for baseline), then the selected week so rank changes appear">Calculate with Prior Week</button>
+            </div>
+            <div id="sr-sales-results"></div>
+          </div>
+        </div>
+        <div class="sub-panel" id="sr-sales-preview">
+          <div class="card">
+            <h3>Preview Sales Report</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week Start:</label>
+              <input type="date" id="sr-sales-prev-start" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <label style="font-size: 0.875rem; color: #6b7280;">Week End:</label>
+              <input type="date" id="sr-sales-prev-end" style="padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button class="btn btn-secondary" onclick="previewStackRankingHtml('sales')">Preview HTML</button>
+            </div>
+            <iframe id="sr-sales-preview-frame" class="preview-frame" style="margin-top:1rem;"></iframe>
+          </div>
+        </div>
+        <div class="sub-panel" id="sr-sales-email">
+          <div class="card">
+            <h3>Send Sales Ranking Email</h3>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+              <button class="btn btn-primary" onclick="sendStackRankingEmail('sales')">Send to All Recipients</button>
+            </div>
+            <hr style="margin: 1rem 0; border: none; border-top: 1px solid #e5e7eb;">
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="email" id="sr-sales-test-email" placeholder="your.email@ghrhealthcare.com" style="flex:1;padding:0.5rem;border:1px solid #d1d5db;border-radius:6px;">
+              <button class="btn btn-secondary" onclick="sendStackRankingTestEmail('sales')" id="sr-sales-send-test-btn">Send Test</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Financials Panel -->
@@ -843,56 +893,102 @@ app.http('adminPortal', {
         <h2 style="margin:0;">App Settings</h2>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Setting</th>
-            <th>Value</th>
-            <th>Description</th>
-            <th>Last Modified</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="settings-table"></tbody>
-      </table>
+      <!-- Email Settings -->
+      <div class="card" style="padding:1rem;margin-bottom:1rem;">
+        <h3 style="margin:0 0 1rem 0;font-size:1rem;">Email Settings</h3>
+        <div style="display:grid;gap:1.25rem;">
 
-      <div class="card" style="margin-top:1rem;padding:1rem;">
-        <h3 style="margin:0 0 0.75rem 0;font-size:1rem;">Add / Edit Setting</h3>
-        <div style="display:grid;grid-template-columns:1fr 2fr 1fr auto;gap:0.75rem;align-items:end;">
           <div>
-            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Key</label>
-            <select id="setting-key" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;">
-              <option value="HOURS_REPORT_FROM_EMAIL">HOURS_REPORT_FROM_EMAIL</option>
-              <option value="HOURS_REPORT_TO_EMAIL">HOURS_REPORT_TO_EMAIL</option>
-              <option value="RECRUITER_RANKING_FROM_EMAIL">RECRUITER_RANKING_FROM_EMAIL</option>
-              <option value="RECRUITER_RANKING_TO_EMAIL">RECRUITER_RANKING_TO_EMAIL</option>
-              <option value="AM_RANKING_FROM_EMAIL">AM_RANKING_FROM_EMAIL</option>
-              <option value="AM_RANKING_TO_EMAIL">AM_RANKING_TO_EMAIL</option>
-              <option value="STACK_RANKING_FROM_EMAIL">STACK_RANKING_FROM_EMAIL (fallback)</option>
-              <option value="STACK_RANKING_TO_EMAIL">STACK_RANKING_TO_EMAIL (fallback)</option>
-              <option value="SYMPLR_BURDEN">SYMPLR_BURDEN</option>
-              <option value="BULLHORN_BURDEN">BULLHORN_BURDEN</option>
-            </select>
+            <div style="font-weight:600;font-size:0.875rem;margin-bottom:0.5rem;color:#374151;">Hours Report</div>
+            <div style="display:grid;gap:0.5rem;">
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">From</label>
+                <input type="email" id="cfg-HOURS_REPORT_FROM_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="sender@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('HOURS_REPORT_FROM_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">To <span style="font-size:0.7rem;">(comma-sep)</span></label>
+                <input type="text" id="cfg-HOURS_REPORT_TO_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="recipient1@example.com, recipient2@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('HOURS_REPORT_TO_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+            </div>
           </div>
+
           <div>
-            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Value</label>
-            <input type="text" id="setting-value" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;font-family:monospace;" placeholder="Comma-separated emails">
+            <div style="font-weight:600;font-size:0.875rem;margin-bottom:0.5rem;color:#374151;">Recruiter Ranking</div>
+            <div style="display:grid;gap:0.5rem;">
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">From</label>
+                <input type="email" id="cfg-RECRUITER_RANKING_FROM_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="sender@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('RECRUITER_RANKING_FROM_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">To <span style="font-size:0.7rem;">(comma-sep)</span></label>
+                <input type="text" id="cfg-RECRUITER_RANKING_TO_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="recipient1@example.com, recipient2@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('RECRUITER_RANKING_TO_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+            </div>
           </div>
+
           <div>
-            <label style="font-size:0.8rem;color:#6b7280;display:block;margin-bottom:0.25rem;">Description</label>
-            <input type="text" id="setting-description" style="width:100%;padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="Optional">
+            <div style="font-weight:600;font-size:0.875rem;margin-bottom:0.5rem;color:#374151;">Account Manager Ranking</div>
+            <div style="display:grid;gap:0.5rem;">
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">From</label>
+                <input type="email" id="cfg-AM_RANKING_FROM_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="sender@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('AM_RANKING_FROM_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">To <span style="font-size:0.7rem;">(comma-sep)</span></label>
+                <input type="text" id="cfg-AM_RANKING_TO_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="recipient1@example.com, recipient2@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('AM_RANKING_TO_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+            </div>
           </div>
-          <button class="btn btn-primary" onclick="saveSetting()" style="padding:0.4rem 1rem;font-size:0.875rem;">Save</button>
+
+          <div>
+            <div style="font-weight:600;font-size:0.875rem;margin-bottom:0.5rem;color:#374151;">Sales Ranking</div>
+            <div style="display:grid;gap:0.5rem;">
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">From</label>
+                <input type="email" id="cfg-SALES_RANKING_FROM_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="sender@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('SALES_RANKING_FROM_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">To <span style="font-size:0.7rem;">(comma-sep)</span></label>
+                <input type="text" id="cfg-SALES_RANKING_TO_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="recipient1@example.com, recipient2@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('SALES_RANKING_TO_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-weight:600;font-size:0.875rem;margin-bottom:0.5rem;color:#374151;">Fallback <span style="font-weight:400;color:#6b7280;font-size:0.8rem;">(used when report-specific address not set)</span></div>
+            <div style="display:grid;gap:0.5rem;">
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">From</label>
+                <input type="email" id="cfg-STACK_RANKING_FROM_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="sender@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('STACK_RANKING_FROM_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+              <div style="display:grid;grid-template-columns:140px 1fr auto;gap:0.5rem;align-items:center;">
+                <label style="font-size:0.8rem;color:#6b7280;">To <span style="font-size:0.7rem;">(comma-sep)</span></label>
+                <input type="text" id="cfg-STACK_RANKING_TO_EMAIL" style="padding:0.4rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.875rem;" placeholder="recipient1@example.com, recipient2@example.com">
+                <button class="btn btn-primary" onclick="saveConfigKey('STACK_RANKING_TO_EMAIL')" style="padding:0.35rem 0.75rem;font-size:0.8rem;">Save</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <div class="card" style="margin-top:1rem;padding:1rem;">
+      <!-- Divisions -->
+      <div class="card" style="padding:1rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
           <h3 style="margin:0;font-size:1rem;">Divisions</h3>
           <button class="btn btn-secondary" onclick="syncDivisions()" style="font-size:0.8rem;">Sync from ATS</button>
         </div>
         <table>
-          <thead><tr><th>Division</th><th>ATS System</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Division</th><th>ATS System</th><th>Burden Rate</th><th>Actions</th></tr></thead>
           <tbody id="ats-mapping-table"></tbody>
         </table>
       </div>
@@ -1047,7 +1143,7 @@ app.http('adminPortal', {
         document.querySelectorAll('.role-tab').forEach(function(t) { t.classList.remove('active'); });
         tab.classList.add('active');
         document.querySelectorAll('.role-panel').forEach(function(p) { p.classList.remove('active'); });
-        var panelId = tab.dataset.role === 'account_manager' ? 'sr-am-panel' : 'sr-recruiter-panel';
+        var panelId = tab.dataset.role === 'account_manager' ? 'sr-am-panel' : tab.dataset.role === 'sales' ? 'sr-sales-panel' : 'sr-recruiter-panel';
         document.getElementById(panelId).classList.add('active');
         getStackRankingDates(tab.dataset.role);
       });
@@ -1218,7 +1314,7 @@ app.http('adminPortal', {
 
     // =========== STACK RANKING ===========
 
-    function srPrefix(type) { return type === 'account_manager' ? 'sr-am' : 'sr-rec'; }
+    function srPrefix(type) { return type === 'account_manager' ? 'sr-am' : type === 'sales' ? 'sr-sales' : 'sr-rec'; }
 
     function getDefaultSRDates() {
       var now = new Date();
@@ -1489,17 +1585,21 @@ app.http('adminPortal', {
       if (debug.bullhornError) {
         debugHtml += '<p style="color:#dc2626;font-size:0.85rem;margin-bottom:0.5rem;">Bullhorn error: ' + debug.bullhornError + '</p>';
       }
+      var fmtHours = function(n) { return (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
       var html = debugHtml + '<p style="color:#6b7280;margin-bottom:1rem;">Week of ' + dates.weekStart + ' to ' + dates.weekEnd + ' &mdash; ' + rows.length + ' users</p>';
       html += '<table style="table-layout:fixed;width:100%;font-size:0.85rem;"><colgroup>' +
-        '<col style="width:4%"><col style="width:17%"><col style="width:10%">' +
-        '<col style="width:5%"><col style="width:12%"><col style="width:12%">' +
-        '<col style="width:10%"><col style="width:10%">' +
-        '<col style="width:12%"><col style="width:8%">' +
+        '<col style="width:3%"><col style="width:14%"><col style="width:9%">' +
+        '<col style="width:4%"><col style="width:8%"><col style="width:8%">' +
+        '<col style="width:9%"><col style="width:9%">' +
+        '<col style="width:9%"><col style="width:9%">' +
+        '<col style="width:10%"><col style="width:8%">' +
         '</colgroup>';
       html += '<thead><tr><th>#</th>' +
         '<th style="' + hdrStyle + '" onclick="sortFinancials(\\'recruiter_name\\')">Name' + arrow('recruiter_name') + '</th>' +
         '<th style="' + hdrStyle + '" onclick="sortFinancials(\\'division_name\\')">Division' + arrow('division_name') + '</th>' +
         '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'head_count\\')">HC' + arrow('head_count') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_bill_hours\\')">Bill Hrs' + arrow('total_bill_hours') + '</th>' +
+        '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_pay_hours\\')">Pay Hrs' + arrow('total_pay_hours') + '</th>' +
         '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_bill\\')">Total Bill' + arrow('total_bill') + '</th>' +
         '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'total_pay\\')">Total Pay' + arrow('total_pay') + '</th>' +
         '<th style="' + hdrRight + hdrStyle + '" onclick="sortFinancials(\\'taxable_pay\\')">Taxable' + arrow('taxable_pay') + '</th>' +
@@ -1510,6 +1610,8 @@ app.http('adminPortal', {
       rows.forEach(function(r, i) {
         html += '<tr><td>' + (i + 1) + '</td><td>' + r.recruiter_name + '</td><td>' + r.division_name + '</td>' +
           '<td style="' + numStyle + '">' + r.head_count + '</td>' +
+          '<td style="' + numStyle + '">' + fmtHours(r.total_bill_hours) + '</td>' +
+          '<td style="' + numStyle + '">' + fmtHours(r.total_pay_hours) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(r.total_bill) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(r.total_pay) + '</td>' +
           '<td style="' + numStyle + '">' + fmtMoney(r.taxable_pay) + '</td>' +
@@ -1518,15 +1620,9 @@ app.http('adminPortal', {
           '<td style="' + numStyle + '">' + fmtPct(r.gross_profit_pct) + '</td></tr>';
       });
 
-      // Grand totals
-      html += '<tr style="font-weight:bold;background:#dbeafe;border-top:2px solid #93c5fd;"><td></td><td>TOTALS</td><td></td>' +
-        '<td style="' + numStyle + '">' + (totals.total_head_count || 0) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtMoney(totals.total_bill) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtMoney(totals.total_pay) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtMoney(totals.total_taxable_pay) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtMoney(totals.total_non_taxable_pay) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtMoney(totals.total_gm_dollars) + '</td>' +
-        '<td style="' + numStyle + '">' + fmtPct(totals.overall_gp_pct) + '</td></tr>';
+      html += '<tr><td colspan="12" style="padding:0.5rem;font-size:0.8rem;color:#6b7280;font-style:italic;">' +
+        'Note: Each placement is credited to both the recruiter and the AM/Sales person at 100%, so column totals are not meaningful here.' +
+        '</td></tr>';
       html += '</tbody></table>';
       results.innerHTML = html;
       document.getElementById('exportFinBtn').style.display = '';
@@ -1543,7 +1639,7 @@ app.http('adminPortal', {
         configs.forEach(function(c) { configMap[c.user_id] = c; });
       } catch (e) { /* proceed without extra fields */ }
 
-      var headers = ['Name', 'Symplr ID', 'Bullhorn ID', 'Title', 'Role', 'Email', 'Division', 'Head Count', 'Total Bill', 'Total Pay', 'Taxable Pay', 'Non-Taxable Pay', 'GM$', 'GP%'];
+      var headers = ['Name', 'Symplr ID', 'Bullhorn ID', 'Title', 'Role', 'Email', 'Division', 'Head Count', 'Bill Hours', 'Pay Hours', 'Total Bill', 'Total Pay', 'Taxable Pay', 'Non-Taxable Pay', 'GM$', 'GP%'];
       var csvRows = [headers.join(',')];
 
       finData.rows.forEach(function(r) {
@@ -1557,6 +1653,8 @@ app.http('adminPortal', {
           '"' + (cfg.email || '').replace(/"/g, '""') + '"',
           '"' + (r.division_name || '').replace(/"/g, '""') + '"',
           r.head_count,
+          r.total_bill_hours,
+          r.total_pay_hours,
           r.total_bill,
           r.total_pay,
           r.taxable_pay,
@@ -1830,93 +1928,43 @@ app.http('adminPortal', {
       try {
         var res = await fetch(API_BASE + '/config');
         var configs = await res.json();
-        var tbody = document.getElementById('settings-table');
-
-        if (!configs.length) {
-          tbody.innerHTML = '<tr><td colspan="5" style="color:#6b7280;text-align:center;">No settings configured yet. Values will fall back to environment variables.</td></tr>';
-          return;
-        }
-
-        var html = '';
-        configs.forEach(function(c) {
-          var displayValue = c.config_value;
-          if (displayValue.length > 80) {
-            displayValue = displayValue.substring(0, 80) + '...';
-          }
-          var modifiedDate = c.modified_at ? new Date(c.modified_at).toLocaleString() : '-';
-          html += '<tr>' +
-            '<td><strong>' + c.config_key + '</strong></td>' +
-            '<td style="font-family:monospace;font-size:0.85rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;word-break:break-all;">' + displayValue + '</td>' +
-            '<td style="color:#6b7280;font-size:0.85rem;">' + (c.description || '-') + '</td>' +
-            '<td style="color:#6b7280;font-size:0.85rem;white-space:nowrap;">' + modifiedDate + '</td>' +
-            '<td class="actions">' +
-              '<button class="btn btn-secondary" onclick="editSetting(\\'' + c.config_key + '\\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Edit</button> ' +
-              '<button class="btn btn-danger" onclick="deleteSetting(\\'' + c.config_key + '\\')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Delete</button>' +
-            '</td></tr>';
+        var configMap = {};
+        configs.forEach(function(c) { configMap[c.config_key] = c.config_value; });
+        var keys = [
+          'HOURS_REPORT_FROM_EMAIL', 'HOURS_REPORT_TO_EMAIL',
+          'RECRUITER_RANKING_FROM_EMAIL', 'RECRUITER_RANKING_TO_EMAIL',
+          'AM_RANKING_FROM_EMAIL', 'AM_RANKING_TO_EMAIL',
+          'SALES_RANKING_FROM_EMAIL', 'SALES_RANKING_TO_EMAIL',
+          'STACK_RANKING_FROM_EMAIL', 'STACK_RANKING_TO_EMAIL'
+        ];
+        keys.forEach(function(key) {
+          var el = document.getElementById('cfg-' + key);
+          if (el && configMap[key]) el.value = configMap[key];
         });
-        tbody.innerHTML = html;
       } catch (err) {
-        document.getElementById('settings-table').innerHTML =
-          '<tr><td colspan="5" class="alert alert-error">Error loading settings: ' + err.message + '</td></tr>';
+        showAlert('Error loading settings: ' + err.message, 'error');
       }
     }
 
-    function editSetting(key) {
-      fetch(API_BASE + '/config').then(function(res) { return res.json(); }).then(function(configs) {
-        var config = configs.find(function(c) { return c.config_key === key; });
-        if (config) {
-          document.getElementById('setting-key').value = config.config_key;
-          document.getElementById('setting-value').value = config.config_value;
-          document.getElementById('setting-description').value = config.description || '';
-          document.getElementById('setting-key').closest('.card').scrollIntoView({ behavior: 'smooth' });
-        }
-      });
-    }
-
-    async function saveSetting() {
-      var key = document.getElementById('setting-key').value;
-      var value = document.getElementById('setting-value').value;
-      var description = document.getElementById('setting-description').value;
-
-      if (!value.trim()) {
-        showAlert('Please enter a value', 'error');
-        return;
-      }
-
+    async function saveConfigKey(key) {
+      var el = document.getElementById('cfg-' + key);
+      if (!el) return;
+      var value = el.value.trim();
+      if (!value) { showAlert('Please enter a value', 'error'); return; }
       try {
         var res = await fetch(API_BASE + '/config/' + encodeURIComponent(key), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: value, description: description || undefined })
+          body: JSON.stringify({ value: value })
         });
         if (res.ok) {
-          showAlert('Setting "' + key + '" saved successfully');
-          document.getElementById('setting-value').value = '';
-          document.getElementById('setting-description').value = '';
-          await loadSettings();
+          showAlert('Saved');
         } else {
           var err = await res.json();
           showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
         }
       } catch (err) {
-        showAlert('Error saving setting: ' + err.message, 'error');
-      }
-    }
-
-    async function deleteSetting(key) {
-      if (!confirm('Delete "' + key + '"? The system will fall back to the environment variable value.')) return;
-
-      try {
-        var res = await fetch(API_BASE + '/config/' + encodeURIComponent(key), { method: 'DELETE' });
-        if (res.ok || res.status === 204) {
-          showAlert('Setting "' + key + '" deleted. Using env var fallback.');
-          await loadSettings();
-        } else {
-          var err = await res.json();
-          showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
-        }
-      } catch (err) {
-        showAlert('Error deleting setting: ' + err.message, 'error');
+        showAlert('Error: ' + err.message, 'error');
       }
     }
 
@@ -1934,27 +1982,50 @@ app.http('adminPortal', {
 
         var tbody = document.getElementById('ats-mapping-table');
         if (!divs.length) {
-          tbody.innerHTML = '<tr><td colspan="3" style="color:#6b7280;text-align:center;">No divisions found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4" style="color:#6b7280;text-align:center;">No divisions found.</td></tr>';
           return;
         }
         var html = '';
         divs.forEach(function(d) {
           var current = mappingMap[d.division_id] || '';
-          html += '<tr><td>' + d.division_name + '</td><td>' +
-            '<select id="ats-select-' + d.division_id + '" style="padding:0.3rem;border:1px solid #d1d5db;border-radius:4px;">' +
+          var burdenVal = d.burden_rate != null ? d.burden_rate : '';
+          html += '<tr>' +
+            '<td>' + d.division_name + '</td>' +
+            '<td><select id="ats-select-' + d.division_id + '" style="padding:0.3rem;border:1px solid #d1d5db;border-radius:4px;">' +
             '<option value=""' + (current === '' ? ' selected' : '') + '>Not mapped</option>' +
             '<option value="symplr"' + (current === 'symplr' ? ' selected' : '') + '>Symplr</option>' +
             '<option value="bullhorn"' + (current === 'bullhorn' ? ' selected' : '') + '>Bullhorn</option>' +
-            '</select></td><td>' +
-            '<button class="btn btn-primary" onclick="saveAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Save</button> ' +
-            (current ? '<button class="btn btn-danger" onclick="removeAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Remove</button>' : '') +
+            '</select></td>' +
+            '<td><input type="number" step="0.01" min="0" id="burden-' + d.division_id + '" value="' + burdenVal + '" style="width:90px;padding:0.3rem;border:1px solid #d1d5db;border-radius:4px;" placeholder="e.g. 52.00"></td>' +
+            '<td>' +
+            '<button class="btn btn-primary" onclick="saveAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Save ATS</button> ' +
+            '<button class="btn btn-primary" onclick="saveDivisionBurden(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Save Burden</button> ' +
+            (current ? '<button class="btn btn-danger" onclick="removeAtsMapping(' + d.division_id + ')" style="padding:0.25rem 0.5rem;font-size:0.75rem;">Remove ATS</button>' : '') +
             '</td></tr>';
         });
         tbody.innerHTML = html;
       } catch (err) {
         document.getElementById('ats-mapping-table').innerHTML =
-          '<tr><td colspan="3" class="alert alert-error">Error: ' + err.message + '</td></tr>';
+          '<tr><td colspan="4" class="alert alert-error">Error: ' + err.message + '</td></tr>';
       }
+    }
+
+    async function saveDivisionBurden(divisionId) {
+      var val = document.getElementById('burden-' + divisionId).value;
+      var burden_rate = val !== '' ? parseFloat(val) : null;
+      try {
+        var res = await fetch(API_BASE + '/divisions/' + divisionId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ burden_rate: burden_rate })
+        });
+        if (res.ok) {
+          showAlert('Burden rate saved');
+        } else {
+          var err = await res.json();
+          showAlert('Error: ' + (err.error || 'Unknown error'), 'error');
+        }
+      } catch (err) { showAlert('Error: ' + err.message, 'error'); }
     }
 
     async function saveAtsMapping(divisionId) {
@@ -2297,8 +2368,8 @@ app.http('getStackRanking', {
       }
 
       const rankingType = (request.query.get('type') || 'recruiter') as RankingType;
-      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
-        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager' && rankingType !== 'sales') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter", "account_manager", or "sales".' } };
       }
 
       const { rows, totals, _debug } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
@@ -2333,8 +2404,8 @@ app.http('getStackRankingHtml', {
       }
 
       const rankingType = (request.query.get('type') || 'recruiter') as RankingType;
-      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
-        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager' && rankingType !== 'sales') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter", "account_manager", or "sales".' } };
       }
 
       const { rows, totals } = await stackRankingService.calculateRanking(weekStart, weekEnd, rankingType);
@@ -2362,8 +2433,8 @@ app.http('sendStackRankingEmail', {
       const weekEndParam = body?.weekEnd;
       const testRecipient = body?.recipient;
       const rankingType = (body?.type || 'recruiter') as RankingType;
-      if (rankingType !== 'recruiter' && rankingType !== 'account_manager') {
-        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter" or "account_manager".' } };
+      if (rankingType !== 'recruiter' && rankingType !== 'account_manager' && rankingType !== 'sales') {
+        return { status: 400, jsonBody: { error: 'Invalid type. Must be "recruiter", "account_manager", or "sales".' } };
       }
 
       let weekStart: string;
@@ -2382,8 +2453,8 @@ app.http('sendStackRankingEmail', {
       const html = emailService.generateStackRankingHtml(rows, totals, weekStart, weekEnd, rankingType);
 
       // Use type-specific config keys with fallback to legacy keys
-      const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
-      const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
+      const toKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_TO_EMAIL' : rankingType === 'sales' ? 'SALES_RANKING_TO_EMAIL' : 'AM_RANKING_TO_EMAIL';
+      const fromKey = rankingType === 'recruiter' ? 'RECRUITER_RANKING_FROM_EMAIL' : rankingType === 'sales' ? 'SALES_RANKING_FROM_EMAIL' : 'AM_RANKING_FROM_EMAIL';
 
       let recipients: string[];
       if (testRecipient) {
@@ -2404,7 +2475,7 @@ app.http('sendStackRankingEmail', {
       if (!fromAddress) {
         fromAddress = await configService.get('STACK_RANKING_FROM_EMAIL', 'contracts@ghrhealthcare.com');
       }
-      const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : 'Recruiter';
+      const typeLabel = rankingType === 'account_manager' ? 'Account Manager' : rankingType === 'sales' ? 'Sales' : 'Recruiter';
       await emailService.sendEmail(recipients, `GHR ${typeLabel} Stack Ranking - Week of ${weekStart}`, html, fromAddress);
 
       return {

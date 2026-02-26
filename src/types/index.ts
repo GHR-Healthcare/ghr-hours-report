@@ -5,11 +5,12 @@ export interface Division {
   division_name: string;
   display_order: number;
   is_active: boolean;
+  burden_rate: number | null;
   created_at: Date;
   modified_at: Date;
 }
 
-export type RecruiterRole = 'recruiter' | 'account_manager' | 'unknown';
+export type RecruiterRole = 'recruiter' | 'account_manager' | 'sales' | 'unknown';
 
 export interface RecruiterConfig {
   config_id: number;
@@ -116,6 +117,7 @@ export interface UpdateDivisionRequest {
   division_name?: string;
   display_order?: number;
   is_active?: boolean;
+  burden_rate?: number | null;
 }
 
 export interface CreateRecruiterRequest {
@@ -192,7 +194,7 @@ export interface UpdateUserConfigRequest {
 // Stack Ranking Types
 
 export type AtsSystem = 'symplr' | 'bullhorn';
-export type RankingType = 'recruiter' | 'account_manager';
+export type RankingType = 'recruiter' | 'account_manager' | 'sales';
 
 export interface DivisionAtsMapping {
   division_id: number;
@@ -208,6 +210,8 @@ export interface PlacementData {
   total_bill_amount: number;
   total_pay_amount: number;
   non_taxable_pay: number;
+  total_bill_hours: number;
+  total_pay_hours: number;
 }
 
 export interface FinancialRow {
@@ -215,6 +219,8 @@ export interface FinancialRow {
   recruiter_name: string;
   division_name: string;
   head_count: number;
+  total_bill_hours: number;
+  total_pay_hours: number;
   total_bill: number;
   total_pay: number;
   taxable_pay: number;
@@ -225,6 +231,8 @@ export interface FinancialRow {
 
 export interface FinancialTotals {
   total_head_count: number;
+  total_bill_hours: number;
+  total_pay_hours: number;
   total_bill: number;
   total_pay: number;
   total_taxable_pay: number;
