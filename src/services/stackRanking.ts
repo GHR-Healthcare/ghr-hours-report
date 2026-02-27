@@ -44,7 +44,8 @@ class StackRankingService {
 
     console.log(`Config maps: Symplr has ${symplrIdToConfig.size} entries, Bullhorn has ${bullhornIdToConfig.size} entries`);
 
-    // 3. Aggregate by config_id (not ATS user_id) so same person's data from both systems combines
+    // 3. Aggregate by user_id so same person's data from both ATS systems combines,
+    //    and duplicate config entries for the same user_id don't cause snapshot insert conflicts.
     const configAggMap = new Map<number, {
       config: UserConfig;
       head_count: number;
@@ -54,14 +55,14 @@ class StackRankingService {
     }>();
 
     const aggregatePlacement = (d: PlacementData, config: UserConfig) => {
-      const existing = configAggMap.get(config.config_id);
+      const existing = configAggMap.get(config.user_id);
       if (existing) {
         existing.head_count += d.head_count;
         existing.total_bill_amount += d.total_bill_amount;
         existing.total_pay_amount += d.total_pay_amount;
         existing.non_taxable_pay += d.non_taxable_pay;
       } else {
-        configAggMap.set(config.config_id, {
+        configAggMap.set(config.user_id, {
           config,
           head_count: d.head_count,
           total_bill_amount: d.total_bill_amount,

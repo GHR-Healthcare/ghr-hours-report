@@ -1294,9 +1294,10 @@ class DatabaseService {
       if (rankingType === 'recruiter') roleFilter = "AND pco.text2 = 'Recruiter'";
       else if (rankingType === 'account_manager' || rankingType === 'sales') roleFilter = "AND pco.text2 IN ('Account Manager', 'Sales Rep')";
 
-      // Bill from BillMasterTransaction → BillMaster → BillableCharge (periodEndDate = weekEnd+1)
-      // Taxable pay from PayMasterTransaction (EarnCode.customText1='Yes') → PayMaster → PayableCharge
-      // Non-taxable pay from PayMasterTransaction (EarnCode.customText1='No') → PayMaster → PayableCharge
+      // Bill from BillMasterTransaction → BillMaster → BillableCharge
+      // Pay from PayMasterTransaction → PayMaster → PayableCharge
+      // Most placements bill Saturday (periodEndDate = @weekEnd),
+      // a minority bill Sunday (periodEndDate = @weekEnd + 1 day) — capture both.
       // NULL earnCode rows excluded (Bullhorn-internal burden charges — we apply our own burden_rate)
       const result = await pool.request()
         .input('weekEnd', sql.Date, weekEnd)
@@ -1308,7 +1309,7 @@ class DatabaseService {
             FROM dbo.BillMasterTransaction bmt
             INNER JOIN dbo.BillMaster bm ON bmt.billMasterID = bm.billMasterID
             INNER JOIN dbo.BillableCharge bc ON bm.billableChargeID = bc.billableChargeID
-            WHERE bc.periodEndDate = DATEADD(day, 1, @weekEnd)
+            WHERE bc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
               AND ISNULL(bmt.isDeleted, 0) = 0
               AND ISNULL(bm.isDeleted, 0) = 0
             GROUP BY bc.placementID, bc.candidateID
@@ -1319,7 +1320,7 @@ class DatabaseService {
             INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
             INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
             INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
-            WHERE pc.periodEndDate = DATEADD(day, 1, @weekEnd)
+            WHERE pc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
               AND ec.customText1 = 'Yes'
               AND ISNULL(pmt.isDeleted, 0) = 0
               AND ISNULL(pm.isDeleted, 0) = 0
@@ -1331,7 +1332,7 @@ class DatabaseService {
             INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
             INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
             INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
-            WHERE pc.periodEndDate = DATEADD(day, 1, @weekEnd)
+            WHERE pc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
               AND ec.customText1 = 'No'
               AND ISNULL(pmt.isDeleted, 0) = 0
               AND ISNULL(pm.isDeleted, 0) = 0
