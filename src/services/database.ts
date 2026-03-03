@@ -1296,47 +1296,53 @@ class DatabaseService {
 
       // Bill from BillMasterTransaction → BillMaster → BillableCharge
       // Pay from PayMasterTransaction → PayMaster → PayableCharge
-      // Most placements bill Saturday (periodEndDate = @weekEnd),
-      // a minority bill Sunday (periodEndDate = @weekEnd + 1 day) — capture both.
-      // NULL earnCode rows excluded (Bullhorn-internal burden charges — we apply our own burden_rate)
+      // Placements bill weekly (Sat/Sun) or bi-weekly. Scan a 2-week window
+      // (weekEnd-7 through weekEnd+1) and take the LATEST billing period per
+      // placement — weekly placements get the current week, bi-weekly placements
+      // get whichever period end falls in the window.
       const result = await pool.request()
         .input('weekEnd', sql.Date, weekEnd)
         .query(`
-          WITH BillData AS (
-            SELECT bc.placementID, bc.candidateID,
+          WITH AllBillPeriods AS (
+            SELECT bc.placementID, bc.candidateID, bc.periodEndDate,
               SUM(bmt.amount) AS total_bill,
               SUM(bmt.quantity) AS total_hours
             FROM dbo.BillMasterTransaction bmt
             INNER JOIN dbo.BillMaster bm ON bmt.billMasterID = bm.billMasterID
             INNER JOIN dbo.BillableCharge bc ON bm.billableChargeID = bc.billableChargeID
-            WHERE bc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
+            WHERE bc.periodEndDate BETWEEN DATEADD(day,-7,@weekEnd) AND DATEADD(day,1,@weekEnd)
               AND ISNULL(bmt.isDeleted, 0) = 0
               AND ISNULL(bm.isDeleted, 0) = 0
-            GROUP BY bc.placementID, bc.candidateID
+            GROUP BY bc.placementID, bc.candidateID, bc.periodEndDate
           ),
-          TaxablePayData AS (
-            SELECT pc.placementID, SUM(pmt.amount) AS taxable_pay, SUM(pmt.quantity) AS pay_hours
+          BillData AS (
+            SELECT placementID, candidateID, total_bill, total_hours
+            FROM (
+              SELECT *, ROW_NUMBER() OVER (PARTITION BY placementID ORDER BY periodEndDate DESC) AS rn
+              FROM AllBillPeriods
+            ) ranked WHERE rn = 1
+          ),
+          AllPayPeriods AS (
+            SELECT pc.placementID, pc.periodEndDate,
+              SUM(CASE WHEN ec.customText1 = 'Yes' THEN pmt.amount ELSE 0 END) AS taxable_pay,
+              SUM(CASE WHEN ec.customText1 = 'Yes' THEN pmt.quantity ELSE 0 END) AS pay_hours,
+              SUM(CASE WHEN ec.customText1 = 'No'  THEN pmt.amount ELSE 0 END) AS non_taxable_pay
             FROM dbo.PayMasterTransaction pmt
             INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
             INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
             INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
-            WHERE pc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
-              AND ec.customText1 = 'Yes'
+            WHERE pc.periodEndDate BETWEEN DATEADD(day,-7,@weekEnd) AND DATEADD(day,1,@weekEnd)
+              AND ec.customText1 IN ('Yes','No')
               AND ISNULL(pmt.isDeleted, 0) = 0
               AND ISNULL(pm.isDeleted, 0) = 0
-            GROUP BY pc.placementID
+            GROUP BY pc.placementID, pc.periodEndDate
           ),
-          NonTaxablePayData AS (
-            SELECT pc.placementID, SUM(pmt.amount) AS non_taxable_pay
-            FROM dbo.PayMasterTransaction pmt
-            INNER JOIN dbo.PayMaster pm ON pmt.payMasterID = pm.payMasterID
-            INNER JOIN dbo.PayableCharge pc ON pm.payableChargeID = pc.payableChargeID
-            INNER JOIN dbo.EarnCode ec ON pm.earnCodeID = ec.earnCodeID
-            WHERE pc.periodEndDate IN (@weekEnd, DATEADD(day, 1, @weekEnd))
-              AND ec.customText1 = 'No'
-              AND ISNULL(pmt.isDeleted, 0) = 0
-              AND ISNULL(pm.isDeleted, 0) = 0
-            GROUP BY pc.placementID
+          PayData AS (
+            SELECT placementID, taxable_pay, pay_hours, non_taxable_pay
+            FROM (
+              SELECT *, ROW_NUMBER() OVER (PARTITION BY placementID ORDER BY periodEndDate DESC) AS rn
+              FROM AllPayPeriods
+            ) ranked WHERE rn = 1
           )
           SELECT
             pco.int2 AS user_id,
@@ -1345,14 +1351,13 @@ class DatabaseService {
             p.customFloat17 AS burden_rate,
             ISNULL(bd.total_bill, 0) AS total_bill,
             ISNULL(bd.total_hours, 0) AS total_hours,
-            ISNULL(tp.taxable_pay, 0) AS taxable_pay,
-            ISNULL(tp.pay_hours, 0) AS pay_hours,
-            ISNULL(ntp.non_taxable_pay, 0) AS non_taxable_pay,
+            ISNULL(pd.taxable_pay, 0) AS taxable_pay,
+            ISNULL(pd.pay_hours, 0) AS pay_hours,
+            ISNULL(pd.non_taxable_pay, 0) AS non_taxable_pay,
             pco.float1 AS commission_pct
           FROM BillData bd
           INNER JOIN dbo.Placement p ON bd.placementID = p.placementID
-          LEFT JOIN TaxablePayData tp ON bd.placementID = tp.placementID
-          LEFT JOIN NonTaxablePayData ntp ON bd.placementID = ntp.placementID
+          LEFT JOIN PayData pd ON bd.placementID = pd.placementID
           INNER JOIN dbo.PlacementCustomObjectInstance pco
             ON bd.placementID = pco.placementID
             AND ISNULL(pco.isDeleted, 0) = 0
