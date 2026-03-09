@@ -220,13 +220,28 @@ class DatabaseService {
     updates.push('modified_at = GETDATE()');
 
     const result = await request.query(`
-      UPDATE dbo.recruiter_config 
+      UPDATE dbo.recruiter_config
       SET ${updates.join(', ')}
       OUTPUT INSERTED.*
       WHERE config_id = @configId
     `);
 
-    return result.recordset[0] || null;
+    const updated = result.recordset[0] || null;
+
+    // Sync weekly_goal to user_config so the report view stays in sync
+    if (updated && data.weekly_goal !== undefined) {
+      try {
+        await pool.request()
+          .input('userId', sql.Int, updated.user_id)
+          .input('weeklyGoal', sql.Int, data.weekly_goal)
+          .query('UPDATE dbo.user_config SET weekly_goal = @weeklyGoal WHERE user_id = @userId');
+      } catch (syncError) {
+        // Don't fail the main update if sync fails
+        console.error('Failed to sync weekly_goal to user_config:', syncError);
+      }
+    }
+
+    return updated;
   }
 
   async deleteRecruiter(configId: number): Promise<boolean> {
