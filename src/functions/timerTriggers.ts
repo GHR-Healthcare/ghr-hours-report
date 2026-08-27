@@ -80,9 +80,11 @@ async function calculateWeeklyHours(context: InvocationContext, snapshotSlotOver
   // Collect all snapshots to save in a batch
   const snapshotsToSave: Array<{userId: number, weekStart: string, dayOfWeek: number, totalHours: number}> = [];
   
-  // Process all three weeks
+  // Only This Week and Next Week are snapshotted.
+  // Last week is finished: its six day-slots were filled in while it WAS this
+  // week, and re-running it would overwrite that history with today's slot,
+  // leaving the Last Week row a mix of old and recalculated values.
   const weeksToProcess: Array<{name: string, data: {sunday: Date, saturday: Date}}> = [
-    { name: 'lastWeek', data: weekInfo.lastWeek },
     { name: 'thisWeek', data: weekInfo.thisWeek },
     { name: 'nextWeek', data: weekInfo.nextWeek }
   ];

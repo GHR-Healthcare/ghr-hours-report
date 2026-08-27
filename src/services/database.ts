@@ -228,17 +228,10 @@ class DatabaseService {
 
     const updated = result.recordset[0] || null;
 
-    // Sync weekly_goal to user_config so the report view stays in sync
-    if (updated && data.weekly_goal !== undefined) {
-      try {
-        await pool.request()
-          .input('userId', sql.Int, updated.user_id)
-          .input('weeklyGoal', sql.Int, data.weekly_goal)
-          .query('UPDATE dbo.user_config SET weekly_goal = @weeklyGoal WHERE user_id = @userId');
-      } catch (syncError) {
-        // Don't fail the main update if sync fails
-        console.error('Failed to sync weekly_goal to user_config:', syncError);
-      }
+    // Deactivating only stops future snapshot writes - the rows already
+    // recorded this week would keep inflating the report totals, so clear them.
+    if (updated && data.is_active !== undefined && !data.is_active) {
+      await this.deleteSnapshotsForUser(updated.user_id);
     }
 
     return updated;
@@ -250,12 +243,28 @@ class DatabaseService {
     const result = await pool.request()
       .input('configId', sql.Int, configId)
       .query(`
-        UPDATE dbo.recruiter_config 
+        UPDATE dbo.recruiter_config
         SET is_deleted = 1, is_active = 0, modified_at = GETDATE()
+        OUTPUT DELETED.user_id
         WHERE config_id = @configId
       `);
-    
+
+    const removedUserId = result.recordset?.[0]?.user_id;
+    if (removedUserId !== undefined) {
+      await this.deleteSnapshotsForUser(removedUserId);
+    }
+
     return (result.rowsAffected[0] || 0) > 0;
+  }
+
+  // Remove a user's snapshot history so their hours drop off the report
+  // immediately when they are deactivated or deleted
+  async deleteSnapshotsForUser(userId: number): Promise<number> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query('DELETE FROM dbo.weekly_snapshots WHERE user_id = @userId');
+    return result.rowsAffected[0] || 0;
   }
 
   // Check if a recruiter exists (including deleted ones) by user_id
@@ -388,6 +397,7 @@ class DatabaseService {
             ws.week_start,
             ws.day_of_week,
             ws.total_hours,
+            MAX(ws.day_of_week) OVER (PARTITION BY ws.user_id, ws.week_start) AS latest_day,
             CASE 
               WHEN ws.week_start = wd.last_week_start THEN 'Last Week'
               WHEN ws.week_start = wd.this_week_start THEN 'This Week'
@@ -413,7 +423,7 @@ class DatabaseService {
           ISNULL(MAX(CASE WHEN sd.day_of_week = 3 THEN sd.total_hours END), 0) AS thu,
           ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
           ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
-          ISNULL(MAX(sd.total_hours), 0) AS weekly_total
+          ISNULL(MAX(CASE WHEN sd.day_of_week = sd.latest_day THEN sd.total_hours END), 0) AS weekly_total
         FROM dbo.recruiter_config rc
         INNER JOIN dbo.divisions d ON rc.division_id = d.division_id
         CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
@@ -495,6 +505,7 @@ class DatabaseService {
             ws.week_start,
             ws.day_of_week,
             ws.total_hours,
+            MAX(ws.day_of_week) OVER (PARTITION BY ws.user_id, ws.week_start) AS latest_day,
             CASE 
               WHEN ws.week_start = wd.last_week_start THEN 'Last Week'
               WHEN ws.week_start = wd.this_week_start THEN 'This Week'
@@ -516,7 +527,7 @@ class DatabaseService {
             ISNULL(MAX(CASE WHEN sd.day_of_week = 3 THEN sd.total_hours END), 0) AS thu,
             ISNULL(MAX(CASE WHEN sd.day_of_week = 4 THEN sd.total_hours END), 0) AS fri,
             ISNULL(MAX(CASE WHEN sd.day_of_week = 5 THEN sd.total_hours END), 0) AS sat,
-            ISNULL(MAX(sd.total_hours), 0) AS weekly_total
+            ISNULL(MAX(CASE WHEN sd.day_of_week = sd.latest_day THEN sd.total_hours END), 0) AS weekly_total
           FROM dbo.recruiter_config rc
           CROSS JOIN (SELECT 'Last Week' AS week_period UNION SELECT 'This Week' UNION SELECT 'Next Week') wp
           LEFT JOIN SnapshotData sd ON rc.user_id = sd.user_id AND sd.week_period = wp.week_period

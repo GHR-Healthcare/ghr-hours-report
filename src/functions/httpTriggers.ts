@@ -365,12 +365,17 @@ app.http('calculateWeekly', {
               lunchMinutes: lunchMinutes
             });
 
-            await databaseService.upsertWeeklySnapshot(
-              userId,
-              weekStart,
-              snapshotDayOfWeek,
-              roundedHours
-            );
+            // Last week is reported for comparison but never re-snapshotted -
+            // its day-slots are already final and overwriting them would
+            // replace that week's history with today's slot.
+            if (weekName !== 'lastWeek') {
+              await databaseService.upsertWeeklySnapshot(
+                userId,
+                weekStart,
+                snapshotDayOfWeek,
+                roundedHours
+              );
+            }
           }
         }
         
